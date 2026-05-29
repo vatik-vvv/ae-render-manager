@@ -39,10 +39,13 @@ python main.py
 ## Build executable
 
 ```powershell
+python build_icon.py
 pip install pyinstaller
 pyinstaller main.spec
 Copy-Item config.example.json dist\config.json
 ```
+
+`build_icon.py` builds `AERM_icon.ico` with 16–256 px layers for sharp Explorer icons (including extra-large view). PyInstaller regenerates the ICO from `AERM_icon.png` when the PNG is newer.
 
 Output: `dist\AERenderManager.exe` (dark-themed GUI, no console). Place `config.json` next to the exe.
 

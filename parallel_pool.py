@@ -298,5 +298,5 @@ class ParallelRenderWorker(QThread):
             stop_render(log_callback=self.log_signal.emit)
         else:
             finalize_queue_render(log_callback=self.log_signal.emit)
-        reset_stop_flag()
         self.finished_signal.emit(was_stopped)
+        reset_stop_flag()

@@ -48,6 +48,7 @@ def ensure_files_exist():
 def main():
     ensure_files_exist()
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("After Effects Render Manager")
     apply_dark_theme(app)
     icon_path = _find_app_icon_path()

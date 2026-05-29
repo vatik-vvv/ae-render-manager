@@ -2,6 +2,7 @@
     "aerender_path": "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\aerender.exe",
     "afterfx_path": "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\AfterFX.com",
     "max_parallel": 2,
+    "sleep_on_queue_finish": false,
     "proxy_rs_template": "Best Settings",
     "rs_templates": [
         "(Use queue)",

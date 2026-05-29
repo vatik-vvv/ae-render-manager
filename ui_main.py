@@ -8,6 +8,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -37,6 +38,7 @@ from ae_paths import detect_ae_installs, get_aerender_path, get_max_parallel
 from ae_render_settings import USE_QUEUE_RS, get_rs_template_options, resolve_frame_range
 from app_paths import config_path
 from parallel_pool import ParallelRenderWorker
+from queue_finalize import handle_queue_finished, run_system_sleep
 from queue_job_source import QueueJobBridge
 from ui_widgets import AepDropList
 from render_progress_tracker import clear_jobs, is_log_frozen, poll_all
@@ -134,6 +136,13 @@ TRANSLATIONS = {
         "move_up": "Move up",
         "move_down": "Move down",
         "move_queue_log": "Moved {n} queue row(s).",
+        "sleep_on_finish": "Sleep entire PC when queue finishes",
+        "confirm_sleep": (
+            "All enabled renders finished and frames are on disk.\n\n"
+            "Put the whole computer to sleep now? (The app will suspend with Windows — "
+            "this is not the same as closing only the render manager.)"
+        ),
+        "confirm_sleep_title": "Sleep computer?",
     },
     "ru": {
         "title": "Менеджер рендера After Effects",
@@ -179,6 +188,13 @@ TRANSLATIONS = {
         "move_up": "Выше",
         "move_down": "Ниже",
         "move_queue_log": "Перемещено строк: {n}.",
+        "sleep_on_finish": "Усыпить весь ПК после очереди",
+        "confirm_sleep": (
+            "Все включённые рендеры завершены, кадры на диске.\n\n"
+            "Усыпить весь компьютер? (Приложение уйдёт в сон вместе с Windows — "
+            "это не закрытие только менеджера рендера.)"
+        ),
+        "confirm_sleep_title": "Усыпить компьютер?",
     },
 }
 
@@ -378,6 +394,13 @@ class RenderManager(QMainWindow):
         ctrl.addWidget(self.start_btn)
         ctrl.addWidget(self.stop_btn)
         ctrl.addWidget(self.remove_queue_btn)
+        self.sleep_on_finish_chk = QCheckBox()
+        self.sleep_on_finish_chk.setToolTip(
+            "When the queue completes successfully, Windows will suspend the entire PC "
+            "(monitor off, app frozen until wake). Not used when you press Stop."
+        )
+        self.sleep_on_finish_chk.toggled.connect(lambda _v: self.save_state())
+        ctrl.addWidget(self.sleep_on_finish_chk)
         ctrl.addStretch()
         z5l.addLayout(ctrl)
         self.render_progress_label = QLabel()
@@ -475,6 +498,7 @@ class RenderManager(QMainWindow):
         self.start_btn.setText(t["start"])
         self.stop_btn.setText(t["stop"])
         self.remove_queue_btn.setText(t["remove_queue"])
+        self.sleep_on_finish_chk.setText(t["sleep_on_finish"])
         self.queue_hint_label.setText(t["queue_hint"])
         self.queue_table.setHorizontalHeaderLabels(t["queue_headers"])
 
@@ -1222,6 +1246,7 @@ class RenderManager(QMainWindow):
             data["aerender_path"] = aerender
             data["afterfx_path"] = afterfx
             data["max_parallel"] = self.max_parallel_spin.value()
+            data["sleep_on_queue_finish"] = self.sleep_on_finish_chk.isChecked()
             data["language"] = self.current_language
             data["aep_files"] = [self.aep_list.item(i).text() for i in range(self.aep_list.count())]
             data["queue"] = [self._queue_row_to_entry(r) for r in range(self.queue_table.rowCount())]
@@ -1256,6 +1281,7 @@ class RenderManager(QMainWindow):
             self.max_parallel_spin.setValue(int(data.get("max_parallel", 1)))
         except (TypeError, ValueError):
             pass
+        self.sleep_on_finish_chk.setChecked(bool(data.get("sleep_on_queue_finish", False)))
         self.aep_list.clear()
         for path in data.get("aep_files", []):
             if path:
@@ -1420,6 +1446,32 @@ class RenderManager(QMainWindow):
             if status not in ("Completed", "Skipped"):
                 return False
         return any_enabled
+
+    def collect_enabled_job_summaries(self):
+        """Snapshot enabled queue rows for queue-finish Telegram and sleep checks."""
+        summaries = []
+        for row in range(self.queue_table.rowCount()):
+            if self._cell_flag(row, COL_ENABLED) == "0":
+                continue
+            entry = self._queue_row_to_entry(row)
+            start, end = resolve_frame_range(
+                entry.get("start_frame"), entry.get("end_frame")
+            )
+            status = self._normalize_queue_status(entry.get("status"))
+            summaries.append(
+                {
+                    "aep": entry.get("aep", ""),
+                    "comp": entry.get("comp", ""),
+                    "full_queue": entry.get("full_queue", False),
+                    "start_frame": start,
+                    "end_frame": end,
+                    "increment": 1,
+                    "output_path": entry.get("output_path", ""),
+                    "status": status,
+                    "duration_text": entry.get("duration", ""),
+                }
+            )
+        return summaries
 
     def _on_queue_batch_updated(self, _pending, batch_total):
         if batch_total > 0:
@@ -1625,20 +1677,47 @@ class RenderManager(QMainWindow):
         self._apply_row_progress(row, ratio)
 
     def _on_queue_finished(self, was_stopped):
-        self._progress_timer.stop()
-        clear_jobs()
-        self._progress_ui_row = -1
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        apply_action_buttons(self.start_btn, self.stop_btn, self.remove_queue_btn)
-        self._update_queue_remove_btn()
-        self._clear_all_status_progress()
-        self._writing_disk_row = -1
-        self._writing_disk_counts = {}
-        self._jobs_done = self._jobs_total
-        self._update_global_progress(0, 0, -1, "")
-        self.log("Queue stopped." if was_stopped else "Queue finished.")
-        self.save_state()
+        try:
+            self._progress_timer.stop()
+            clear_jobs()
+            self._progress_ui_row = -1
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            apply_action_buttons(self.start_btn, self.stop_btn, self.remove_queue_btn)
+            self._update_queue_remove_btn()
+            self._clear_all_status_progress()
+            self._writing_disk_row = -1
+            self._writing_disk_counts = {}
+            self._jobs_done = self._jobs_total
+            self._update_global_progress(0, 0, -1, "")
+            self.log("Queue stopped." if was_stopped else "Queue finished.")
+            summaries = self.collect_enabled_job_summaries()
+            sleep_on = self.sleep_on_finish_chk.isChecked()
+            should_sleep = handle_queue_finished(
+                was_stopped, summaries, sleep_on, log_callback=self.log
+            )
+            if should_sleep:
+                t = TRANSLATIONS[self.current_language]
+                if (
+                    QMessageBox.question(
+                        self,
+                        t["confirm_sleep_title"],
+                        t["confirm_sleep"],
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    == QMessageBox.Yes
+                ):
+                    run_system_sleep(log_callback=self.log)
+                else:
+                    self.log("System sleep cancelled.")
+        except Exception as exc:
+            self.log(f"Queue finished handler error: {exc}")
+        finally:
+            self.save_state()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def closeEvent(self, event):
         stop_all_renders(log_callback=self.log)

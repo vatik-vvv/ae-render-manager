@@ -53,21 +53,60 @@ hiddenimports = _local_py_hiddenimports() + [
 hiddenimports = sorted(set(hiddenimports))
 
 def _ensure_exe_icon():
-    """Windows EXE icon: prefer AERM_icon.ico, generate from AERM_icon.png if needed."""
-    if os.path.isfile("AERM_icon.ico"):
-        return "AERM_icon.ico"
-    if os.path.isfile("AERM_icon.png"):
+    """Windows EXE icon: multi-size ICO for Explorer (16–256px). Regenerate if stale."""
+    png_path = os.path.join(_SPEC_DIR, "AERM_icon.png")
+    ico_path = os.path.join(_SPEC_DIR, "AERM_icon.ico")
+    legacy = os.path.join(_SPEC_DIR, "app_icon.ico")
+
+    def _ico_needs_rebuild():
+        if not os.path.isfile(ico_path) or not os.path.isfile(png_path):
+            return True
         try:
             from PIL import Image
 
-            img = Image.open("AERM_icon.png").convert("RGBA")
-            sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
-            img.save("AERM_icon.ico", format="ICO", sizes=sizes)
-            return "AERM_icon.ico"
+            ico = Image.open(ico_path)
+            sizes = ico.info.get("sizes") or set()
+            if (256, 256) not in sizes or len(sizes) < 6:
+                return True
+            return os.path.getmtime(png_path) > os.path.getmtime(ico_path)
         except Exception:
-            pass
-    if os.path.isfile("app_icon.ico"):
-        return "app_icon.ico"
+            return True
+
+    if _ico_needs_rebuild() and os.path.isfile(png_path):
+        try:
+            import runpy
+
+            runpy.run_path(os.path.join(_SPEC_DIR, "build_icon.py"), run_name="__ico__")
+        except Exception:
+            try:
+                from PIL import Image
+
+                src = Image.open(png_path).convert("RGBA")
+                w, h = src.size
+                side = min(w, h)
+                src = src.crop(
+                    ((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side)
+                )
+                if max(src.size) < 1024:
+                    src = src.resize((1024, 1024), Image.Resampling.LANCZOS)
+                ico_sizes = [
+                    (256, 256),
+                    (128, 128),
+                    (96, 96),
+                    (64, 64),
+                    (48, 48),
+                    (32, 32),
+                    (24, 24),
+                    (16, 16),
+                ]
+                src.save(ico_path, format="ICO", sizes=ico_sizes)
+            except Exception:
+                pass
+
+    if os.path.isfile(ico_path):
+        return ico_path
+    if os.path.isfile(legacy):
+        return legacy
     return None
 
 

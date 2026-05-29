@@ -1,0 +1,11 @@
+After Effects Render Manager — Windows install (no compile needed)
+
+1. Unzip this folder anywhere (e.g. Desktop\AERenderManager).
+2. Copy config.example.json to config.json (same folder as AERenderManager.exe).
+3. Edit config.json: set aerender_path to your After Effects aerender.exe.
+4. Optional: Telegram bot_token and chat_id for notifications.
+5. Run AERenderManager.exe.
+
+In After Effects: add comps to Render Queue, save the .aep, then use the manager to scan and render.
+
+Source & updates: https://github.com/vatik-vvv/ae-render-manager

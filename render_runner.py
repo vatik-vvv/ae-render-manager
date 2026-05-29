@@ -54,6 +54,7 @@ from render_progress_tracker import (
 )
 from telegram_notifier import send_message
 from telegram_previews import TelegramMilestonePreviewer, make_deduped_preview_callback
+from telegram_report import format_job_telegram, status_from_render_result
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -132,29 +133,6 @@ def _is_full_queue_job(job):
     rq_index = job.get("rq_index")
     comp = (job.get("comp") or "").strip()
     return not rq_index and not comp
-
-
-def _format_telegram_start(job):
-    target = "Entire AE render queue"
-    if not _is_full_queue_job(job):
-        target = job.get("comp") or f"RQ#{job.get('rq_index')}"
-    return (
-        "Start render:\n"
-        f"AEP: {job.get('project')}\n"
-        f"Target: {target}"
-    )
-
-
-def _format_telegram_finish(job, duration_str):
-    target = "Entire AE render queue"
-    if not _is_full_queue_job(job):
-        target = job.get("comp") or f"RQ#{job.get('rq_index')}"
-    return (
-        "Finished render:\n"
-        f"AEP: {job.get('project')}\n"
-        f"Target: {target}\n"
-        f"Render time: {duration_str}"
-    )
 
 
 def build_aerender_cmd(job, log_path=None, segment_start=None, segment_end=None):
@@ -301,6 +279,7 @@ def run_render(
         "full_queue": full_queue,
         "use_proxy": use_proxy,
         "rs_template_scanned": rs_template_scanned or rs_template,
+        "increment": increment,
     }
 
     prefix = f"[{job_label}] " if job_label else ""
@@ -344,6 +323,10 @@ def run_render(
                     log_callback(
                         f"{prefix}Skip: all {total} frame(s) already on disk — {output_path}"
                     )
+                skip_msg = format_job_telegram(
+                    job, "finish", status="Skipped", duration_sec=0
+                )
+                _notify_telegram(skip_msg, log_callback)
                 return 0
             if log_callback and total > 0 and existing > 0:
                 missing = first_missing_frame(
@@ -429,11 +412,11 @@ def run_render(
                 increment,
             )
 
-        message = _format_telegram_start(job)
         render_started_at = time.monotonic()
+        start_msg = format_job_telegram(job, "start", status="Starting")
         if log_callback:
-            log_callback(prefix + message.replace("\n", " | "))
-        _notify_telegram(message, log_callback)
+            log_callback(prefix + start_msg.replace("\n", " | "))
+        _notify_telegram(start_msg, log_callback)
 
         log_name = f"render_{uuid.uuid4().hex[:8]}.log"
         log_path = os.path.join(logs_dir(), log_name)
@@ -688,6 +671,18 @@ def run_render(
                 if log_callback:
                     log_callback(f"{prefix}Render stopped by user.")
                 cleanup_incomplete_outputs(log_callback=log_callback)
+                duration_sec = time.monotonic() - render_started_at
+                status_label, err_detail = status_from_render_result(
+                    -1, stopped=True
+                )
+                stop_msg = format_job_telegram(
+                    job,
+                    "error",
+                    status=status_label,
+                    duration_sec=duration_sec,
+                    error_detail=err_detail,
+                )
+                _notify_telegram(stop_msg, log_callback)
                 return -1
 
             retcode = proc.wait()
@@ -698,6 +693,18 @@ def run_render(
             _unregister_session(session)
 
             if is_stop_requested():
+                duration_sec = time.monotonic() - render_started_at
+                status_label, err_detail = status_from_render_result(
+                    -1, stopped=True
+                )
+                stop_msg = format_job_telegram(
+                    job,
+                    "error",
+                    status=status_label,
+                    duration_sec=duration_sec,
+                    error_detail=err_detail,
+                )
+                _notify_telegram(stop_msg, log_callback)
                 return -1
 
             summary = parse_aerender_log_summary(log_path)
@@ -828,6 +835,23 @@ def run_render(
                     log_callback(
                         f"{prefix}Render incomplete — not all frames in range are on disk."
                     )
+                duration_sec = time.monotonic() - render_started_at
+                detail = (
+                    f"{existing}/{total} frame(s) on disk"
+                    if existing is not None and total
+                    else "Not all frames are on disk"
+                )
+                status_label, err_detail = status_from_render_result(
+                    2, incomplete=True, error_detail=detail
+                )
+                inc_msg = format_job_telegram(
+                    job,
+                    "error",
+                    status=status_label,
+                    duration_sec=duration_sec,
+                    error_detail=err_detail,
+                )
+                _notify_telegram(inc_msg, log_callback)
                 return 2
             if (
                 output_path
@@ -840,23 +864,51 @@ def run_render(
                 )
             if progress_row is not None and total and existing is not None:
                 _emit_progress(1.0, allow_complete=True)
-            duration_str = _format_elapsed(time.monotonic() - render_started_at)
-            finish_msg = _format_telegram_finish(job, duration_str)
+            duration_sec = time.monotonic() - render_started_at
+            status_label, err_detail = status_from_render_result(0)
+            finish_msg = format_job_telegram(
+                job,
+                "finish",
+                status=status_label,
+                duration_sec=duration_sec,
+            )
             if log_callback:
                 log_callback(prefix + finish_msg.replace("\n", " | "))
             _notify_telegram(finish_msg, log_callback)
         else:
-            fail_msg = f"Render failed (code {retcode}): {project}"
+            duration_sec = time.monotonic() - render_started_at
+            summary = parse_aerender_log_summary(log_path)
+            early = describe_aerender_early_exit(summary, frame_start, frame_end)
+            err_detail = early or ""
+            status_label, err_detail = status_from_render_result(
+                retcode,
+                incomplete=(retcode == 2),
+                error_detail=err_detail,
+            )
+            fail_msg = format_job_telegram(
+                job,
+                "error",
+                status=status_label,
+                duration_sec=duration_sec,
+                error_detail=err_detail,
+            )
             if log_callback:
-                log_callback(prefix + fail_msg)
+                log_callback(prefix + fail_msg.replace("\n", " | "))
             _notify_telegram(fail_msg, log_callback)
         return retcode
 
     except Exception as e:
         logger.exception("Render error")
+        err_text = str(e)
         if log_callback:
-            log_callback(f"{prefix}Error: {e}")
-        _notify_telegram(f"Error: {e}", log_callback)
+            log_callback(f"{prefix}Error: {err_text}")
+        err_msg = format_job_telegram(
+            job,
+            "error",
+            status="Error",
+            error_detail=err_text,
+        )
+        _notify_telegram(err_msg, log_callback)
         if session:
             _kill_session(session, force=True)
         return -1

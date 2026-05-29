@@ -20,6 +20,9 @@ AE_NAME_MARKERS = ("aerender", "afterfx", "dynamiclink")
 
 AE_IMAGE_NAMES = ("aerender.exe", "AfterFX.com", "AfterFX.exe")
 
+# Never treat our own app (or similar names) as Adobe render processes.
+_PROCESS_NAME_EXCLUDES = ("aerendermanager",)
+
 
 
 
@@ -169,9 +172,11 @@ def kill_process_tree(pid, force=True):
 
 
 def _is_ae_process_name(name):
-
     lower = (name or "").lower()
-
+    if any(excl in lower for excl in _PROCESS_NAME_EXCLUDES):
+        return False
+    if lower in {img.lower() for img in AE_IMAGE_NAMES}:
+        return True
     return any(marker in lower for marker in AE_NAME_MARKERS)
 
 
