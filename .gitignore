@@ -18,6 +18,8 @@ logs/
 # PyInstaller
 build/
 dist/
+release/
+AERenderManager-*-win64.zip
 
 # IDE / editor
 .idea/
