@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Local config and runtime data
+config.json
+queue.json
+scan_args.json
+scan_result.json
+logs/
+
+# PyInstaller
+build/
+dist/
+
+# IDE / editor
+.idea/
+.vscode/
+.cursor/
+*.code-workspace
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs / temp
+*.log
+*.tmp
+HAP-log.txt

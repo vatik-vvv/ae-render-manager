@@ -1,0 +1,24 @@
+{
+    "aerender_path": "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\aerender.exe",
+    "afterfx_path": "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\AfterFX.com",
+    "max_parallel": 2,
+    "proxy_rs_template": "Best Settings",
+    "rs_templates": [
+        "(Use queue)",
+        "Best Settings",
+        "Draft Settings",
+        "Multi-Machine Settings"
+    ],
+    "telegram": {
+        "bot_token": "",
+        "chat_id": "",
+        "preview_max_side": 2000
+    },
+    "ui": {
+        "width": 1200,
+        "height": 800
+    },
+    "language": "en",
+    "aep_files": [],
+    "queue": []
+}
