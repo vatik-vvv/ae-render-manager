@@ -244,7 +244,7 @@
     return null;
   }
 
-  function readProxyFromRenderSettings(item) {
+  function detectUseProxy(item, comp) {
     var parsed = null;
     try {
       if (item.getSetting) {
@@ -255,21 +255,58 @@
         if (parsed === null) {
           parsed = parseProxySettingNumber(item.getSetting("Proxy Use"));
         }
+        if (parsed === null) {
+          parsed = parseProxyMenuIndex(item.getSetting("Proxy Use"));
+        }
       }
     } catch (ePxSet) {}
-    if (parsed === true) {
-      return true;
-    }
-    if (parsed === false) {
-      return false;
+    if (parsed !== null) {
+      return parsed;
     }
 
-    parsed = readProxyFromRenderSettings(item);
-    if (parsed === true) {
-      return true;
+    function walk(group, depth) {
+      if (!group || depth > 8 || parsed !== null) {
+        return;
+      }
+      var n;
+      try {
+        n = group.numProperties;
+      } catch (e0) {
+        return;
+      }
+      var i;
+      for (i = 1; i <= n; i++) {
+        var prop;
+        try {
+          prop = group.property(i);
+        } catch (e1) {
+          continue;
+        }
+        if (!prop) {
+          continue;
+        }
+        var pname = String(prop.name);
+        if (pname === "Proxy Use" || pname.indexOf("Proxy Use") >= 0) {
+          parsed = parseProxyMenuIndex(prop.value);
+          if (parsed === null) {
+            parsed = parseProxyUseString(prop.value);
+          }
+          if (parsed !== null) {
+            return;
+          }
+        }
+        try {
+          if (prop.numProperties && prop.numProperties > 0) {
+            walk(prop, depth + 1);
+          }
+        } catch (e2) {}
+      }
     }
-    if (parsed === false) {
-      return false;
+    try {
+      walk(item.renderSettings, 0);
+    } catch (ePxRs) {}
+    if (parsed !== null) {
+      return parsed;
     }
 
     try {
@@ -577,6 +614,13 @@
         }
         if (om && om.template) {
           omTemplate = String(om.template);
+        }
+        if (!omTemplate && om) {
+          try {
+            if (om.name) {
+              omTemplate = String(om.name);
+            }
+          } catch (eOmName) {}
         }
       } catch (eOm) {}
 

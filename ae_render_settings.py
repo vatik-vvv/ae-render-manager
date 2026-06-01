@@ -1,8 +1,8 @@
 """Resolve aerender render-setting overrides from queue job fields."""
 
 import json
-
 import os
+import re
 
 
 
@@ -140,13 +140,46 @@ def resolve_rs_template(job):
 
         return rs
 
-    use_proxy = job.get("use_proxy") in (True, "1", 1)
-
-    if use_proxy:
-
-        return get_proxy_rs_template()
-
+    # Proxy use is already stored on the AE render-queue item when using (Use queue).
+    # Forcing proxy_rs_template here drops the output module and breaks -output paths.
     return ""
+
+
+def infer_om_template_from_output(output_path):
+    """Guess AE output-module template name from the scanned file path."""
+    if not output_path:
+        return ""
+    probe = re.sub(r"\[(#+)\]", "", str(output_path))
+    probe = re.sub(r"#+", "", probe)
+    ext = os.path.splitext(probe)[1].lower()
+    by_ext = {
+        ".png": "PNG Sequence",
+        ".jpg": "JPEG Sequence",
+        ".jpeg": "JPEG Sequence",
+        ".tif": "TIFF Sequence",
+        ".tiff": "TIFF Sequence",
+        ".tga": "Targa Sequence",
+        ".exr": "OpenEXR Sequence",
+        ".dpx": "DPX Sequence",
+        ".mov": "Lossless",
+        ".mp4": "H.264 - Match Source - High Bitrate",
+    }
+    return by_ext.get(ext, "")
+
+
+def resolve_om_template(job):
+    """
+    Return -OMtemplate value when render settings are overridden.
+
+    With -RStemplate only, After Effects may use a default output module that does not
+    match the PNG sequence path from the render queue scan.
+    """
+    if not resolve_rs_template(job):
+        return ""
+    om = (job.get("om_template_scanned") or job.get("om_template") or "").strip()
+    if not om:
+        om = infer_om_template_from_output((job.get("output_path") or "").strip())
+    return om
 
 
 

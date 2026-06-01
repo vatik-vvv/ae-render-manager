@@ -197,6 +197,7 @@ def wait_for_render_output_idle(
     progress_callback=None,
     max_wait=RENDER_OUTPUT_MAX_WAIT_SEC,
     on_poll=None,
+    ae_busy_check=None,
 ):
     """
     After aerender.exe exits, AfterFX may still be writing frames.
@@ -230,7 +231,13 @@ def wait_for_render_output_idle(
                 progress_callback(ratio, existing, total)
             except TypeError:
                 progress_callback(ratio)
-        ae_busy = ae_render_process_running()
+        if ae_busy_check is not None:
+            try:
+                ae_busy = bool(ae_busy_check())
+            except Exception:
+                ae_busy = False
+        else:
+            ae_busy = False
         log_done = aerender_log_shows_finished(log_path)
 
         if existing > last_count or ae_busy:

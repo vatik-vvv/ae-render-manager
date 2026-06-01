@@ -185,8 +185,29 @@ def _resolve_scan_jsx():
 
     work = scan_work_dir()
     stable = os.path.join(work, "scan_render_queue.jsx")
+
+    def _needs_jsx_refresh(dest):
+        if not os.path.isfile(dest):
+            return True
+        try:
+            with open(src, encoding="utf-8") as handle:
+                src_text = handle.read()
+            dest_text = ""
+            if os.path.isfile(dest):
+                with open(dest, encoding="utf-8") as handle:
+                    dest_text = handle.read()
+        except OSError:
+            return True
+        src_ok = "function detectUseProxy" in src_text
+        dest_ok = "function detectUseProxy" in dest_text
+        if dest_ok and not src_ok:
+            return False
+        if src_ok and not dest_ok:
+            return True
+        return os.path.getmtime(src) > os.path.getmtime(dest)
+
     try:
-        if not os.path.isfile(stable) or os.path.getmtime(src) > os.path.getmtime(stable):
+        if _needs_jsx_refresh(stable):
             shutil.copy2(src, stable)
     except OSError as exc:
         logger.warning("Could not copy scanner to work dir: %s", exc)
@@ -195,7 +216,7 @@ def _resolve_scan_jsx():
     if is_frozen():
         exe_copy = os.path.join(app_dir(), "scan_render_queue.jsx")
         try:
-            if not os.path.isfile(exe_copy) or os.path.getmtime(src) > os.path.getmtime(exe_copy):
+            if _needs_jsx_refresh(exe_copy):
                 shutil.copy2(src, exe_copy)
         except OSError:
             pass

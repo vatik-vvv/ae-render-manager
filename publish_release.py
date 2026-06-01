@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 REPO = "vatik-vvv/ae-render-manager"
-DEFAULT_VERSION = "1.1.0"
+DEFAULT_VERSION = "1.1.1"
 
 
 def _token() -> str | None:
@@ -80,7 +80,16 @@ Pre-built package — no Python or compile step required.
 - **{zip_path.name}** — unzip and run `AERenderManager.exe`
 - Copy `config.example.json` → `config.json` and set your `aerender_path`
 
-### Changes since initial release
+### Changes in 1.1.1
+- Fix renders writing 0 frames when proxy/RS forced Best Settings without output module
+- Pass `-OMtemplate` when render settings are overridden; infer PNG/JPEG OM from output path
+- Use queue by default on scan; proxy no longer overrides RS (keeps AE queue OM/path)
+- Stop only kills aerender trees started by this app (not all After Effects instances)
+- Queue row reorder during render keeps progress on the correct row
+- Clearer failure diagnostics (log size, output folder, RS/OM hints)
+- Fix `is_use_queue_rs` crash that aborted jobs immediately after the command line
+
+### Changes in 1.1.0
 - Fix app closing when queue finishes or Stop (no longer kills AERenderManager.exe)
 - Optional sleep entire PC when queue completes (with confirmation)
 - Richer Telegram notifications (AEP, comp, frames, timing, status)

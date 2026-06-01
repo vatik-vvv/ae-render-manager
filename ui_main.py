@@ -41,7 +41,7 @@ from parallel_pool import ParallelRenderWorker
 from queue_finalize import handle_queue_finished, run_system_sleep
 from queue_job_source import QueueJobBridge
 from ui_widgets import AepDropList
-from render_progress_tracker import clear_jobs, is_log_frozen, poll_all
+from render_progress_tracker import clear_jobs, is_log_frozen, poll_all, swap_rows
 from render_runner import stop_all_renders, stop_render
 from scan_worker import ScanWorker
 from telegram_notifier import check_preview_dependencies, reload_config, send_message
@@ -801,12 +801,11 @@ class RenderManager(QMainWindow):
             self._set_toggle_item(row, COL_SKIP, bool(item.get("skip_existing")))
             self._set_toggle_item(row, COL_PROXY, bool(item.get("use_proxy")))
             scanned_rs = item.get("rs_template", "") or ""
-            if item.get("skip_existing"):
-                rs_pick = USE_QUEUE_RS
-            else:
-                rs_pick = scanned_rs or USE_QUEUE_RS
+            scanned_om = item.get("om_template", "") or ""
+            rs_pick = USE_QUEUE_RS
             rs_combo = self._make_rs_combo(rs_pick, scanned_rs)
             rs_combo.setProperty("rs_scanned", scanned_rs)
+            rs_combo.setProperty("om_scanned", scanned_om)
             self.queue_table.setCellWidget(row, COL_RS, rs_combo)
             self.queue_table.setItem(row, COL_OUTPUT, QTableWidgetItem(item.get("output", "") or ""))
             scan_status = item.get("status", "Pending")
@@ -982,8 +981,41 @@ class RenderManager(QMainWindow):
                     self._swap_queue_row_with(row, row + 1)
         finally:
             self.queue_table.blockSignals(False)
+        if self._queue_rendering():
+            self._remap_rows_after_swap(row_a, row_b)
         self.save_state()
         self.log(self.tr("move_queue_log").format(n=len(rows)))
+
+    def _remap_rows_after_swap(self, row_a, row_b):
+        swap_rows(row_a, row_b)
+        for attr in ("_active_render_row", "_progress_ui_row", "_writing_disk_row"):
+            val = getattr(self, attr)
+            if val == row_a:
+                setattr(self, attr, row_b)
+            elif val == row_b:
+                setattr(self, attr, row_a)
+        counts = self._writing_disk_counts
+        count_a = counts.pop(row_a, None)
+        count_b = counts.pop(row_b, None)
+        if count_a is not None:
+            counts[row_b] = count_a
+        if count_b is not None:
+            counts[row_a] = count_b
+        if self.queue_thread:
+            self.queue_thread.remap_rows(row_a, row_b)
+        for row in (row_a, row_b):
+            self._sync_row_status_progress(row)
+        self.refresh_queue_snapshot(hot_append=True)
+
+    def _sync_row_status_progress(self, row):
+        ratio = poll_all().get(row)
+        status = self._queue_row_status(row)
+        if self._is_active_render_status(status):
+            self._set_status_progress(row, ratio if ratio is not None else 0.0)
+        elif ratio is not None and ratio > 0:
+            self._set_status_progress(row, ratio)
+        else:
+            self._set_status_progress(row, None)
 
     def _swap_queue_row_with(self, row_a, row_b):
         entry_a = self._queue_row_to_entry(row_a)
@@ -1016,9 +1048,11 @@ class RenderManager(QMainWindow):
         self._set_toggle_item(row, COL_SKIP, self._flag_is_on(entry.get("skip", "0")))
         self._set_toggle_item(row, COL_PROXY, self._flag_is_on(entry.get("use_proxy", "0")))
         scanned_rs = entry.get("rs_template_scanned", entry.get("rs_template", "")) or ""
+        scanned_om = entry.get("om_template_scanned", "") or ""
         saved_rs = entry.get("rs_template", "") or USE_QUEUE_RS
         rs_combo = self._make_rs_combo(saved_rs, scanned_rs)
         rs_combo.setProperty("rs_scanned", scanned_rs)
+        rs_combo.setProperty("om_scanned", scanned_om)
         self.queue_table.setCellWidget(row, COL_RS, rs_combo)
         self.queue_table.setItem(
             row, COL_OUTPUT, QTableWidgetItem(entry.get("output_path", "") or "")
@@ -1035,6 +1069,8 @@ class RenderManager(QMainWindow):
         end_t = entry.get("end_time", "")
         duration = entry.get("duration", "") or self._render_time_between(start_t, end_t)
         self.queue_table.setItem(row, COL_DURATION, QTableWidgetItem(duration))
+        if self._queue_rendering():
+            self._sync_row_status_progress(row)
 
     def _reset_queue_status(self, rows):
         rows = sorted({r for r in rows if 0 <= r < self.queue_table.rowCount()})
@@ -1197,6 +1233,12 @@ class RenderManager(QMainWindow):
         item = self.queue_table.item(row, COL_RS)
         return item.data(Qt.UserRole) if item else ""
 
+    def _om_scanned_for_row(self, row):
+        widget = self.queue_table.cellWidget(row, COL_RS)
+        if isinstance(widget, QComboBox):
+            return widget.property("om_scanned") or ""
+        return ""
+
     def _queue_row_to_entry(self, row):
         return {
             "enabled": self._cell_flag(row, COL_ENABLED),
@@ -1209,6 +1251,7 @@ class RenderManager(QMainWindow):
             "use_proxy": self._cell_flag(row, COL_PROXY),
             "rs_template": self._cell_rs_template(row),
             "rs_template_scanned": self._rs_scanned_for_row(row),
+            "om_template_scanned": self._om_scanned_for_row(row),
             "output_path": self._cell_text(row, COL_OUTPUT),
             "status": self._cell_text(row, COL_STATUS),
             "send2bot": self._cell_text(row, COL_SEND2BOT),
@@ -1379,6 +1422,7 @@ class RenderManager(QMainWindow):
             "output_path": entry.get("output_path", ""),
             "rs_template": entry.get("rs_template", ""),
             "rs_template_scanned": entry.get("rs_template_scanned", ""),
+            "om_template_scanned": entry.get("om_template_scanned", ""),
             "skip_val": entry.get("skip", "0"),
             "use_proxy": entry.get("use_proxy", "0"),
         }
@@ -1736,4 +1780,4 @@ class RenderManager(QMainWindow):
         stop_render(log_callback=self.log)
         if self.queue_thread and self.queue_thread.isRunning():
             self.queue_thread.requestInterruption()
-        self.log("Stop requested — aerender and After Effects should exit within a few seconds.")
+        self.log("Stop requested — only render processes started by this app will be stopped.")

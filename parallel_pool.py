@@ -1,6 +1,7 @@
 """Parallel render queue worker for PySide6 UI."""
 
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -37,6 +38,37 @@ class ParallelRenderWorker(QThread):
         self.max_parallel = max_parallel or get_max_parallel()
         self._executor = None
         self._last_batch_size = 0
+        self._row_ui_map = {}
+        self._row_map_lock = threading.Lock()
+        self._in_flight_rows = set()
+
+    def remap_rows(self, row_a, row_b):
+        """Keep running job progress/status on the correct UI row after a swap."""
+        row_a, row_b = int(row_a), int(row_b)
+        if row_a == row_b:
+            return
+        with self._row_map_lock:
+            for worker_row in list(self._row_ui_map):
+                ui_row = self._row_ui_map[worker_row]
+                if ui_row == row_a:
+                    self._row_ui_map[worker_row] = row_b
+                elif ui_row == row_b:
+                    self._row_ui_map[worker_row] = row_a
+            for worker_row in (row_a, row_b):
+                if worker_row not in self._row_ui_map:
+                    self._row_ui_map[worker_row] = row_b if worker_row == row_a else row_a
+                elif self._row_ui_map[worker_row] == worker_row:
+                    self._row_ui_map[worker_row] = row_b if worker_row == row_a else row_a
+        if row_a in self._in_flight_rows:
+            self._in_flight_rows.discard(row_a)
+            self._in_flight_rows.add(row_b)
+        elif row_b in self._in_flight_rows:
+            self._in_flight_rows.discard(row_b)
+            self._in_flight_rows.add(row_a)
+
+    def _ui_row(self, worker_row):
+        with self._row_map_lock:
+            return self._row_ui_map.get(int(worker_row), int(worker_row))
 
     def _fetch_pending_jobs(self):
         jobs = []
@@ -83,7 +115,7 @@ class ParallelRenderWorker(QThread):
         if is_stop_requested():
             return row, "Stopped", None
 
-        self.progress_signal.emit(idx, total, row)
+        self.progress_signal.emit(idx, total, self._ui_row(row))
 
         aep = item["project"]
         rq_index = item.get("rq_index")
@@ -117,7 +149,7 @@ class ParallelRenderWorker(QThread):
             return row, "Stopped", None
 
         start_time = datetime.now().strftime("%H:%M:%S")
-        self.update_row_signal.emit(row, "Running", start_time, "")
+        self.update_row_signal.emit(self._ui_row(row), "Running", start_time, "")
 
         send2bot = max(0, int(item.get("send2bot", 0) or 0))
         frame_cb = None
@@ -145,12 +177,13 @@ class ParallelRenderWorker(QThread):
         def progress_cb(ratio, existing=-1, total=-1, r=row):
             if is_stop_requested():
                 return
+            ui = self._ui_row(r)
             if total > 0 and existing >= 0:
-                set_ratio(r, existing / float(total), force=True)
-                self.disk_progress_signal.emit(r, existing, total)
+                set_ratio(ui, existing / float(total), force=True)
+                self.disk_progress_signal.emit(ui, existing, total)
             else:
-                set_ratio(r, ratio)
-            self.frame_progress_signal.emit(r, float(ratio))
+                set_ratio(ui, ratio)
+            self.frame_progress_signal.emit(ui, float(ratio))
 
         ret = run_render(
             project=item["project"],
@@ -162,6 +195,7 @@ class ParallelRenderWorker(QThread):
             output_path=output_path,
             rs_template=item.get("rs_template", ""),
             rs_template_scanned=item.get("rs_template_scanned", ""),
+            om_template_scanned=item.get("om_template_scanned", ""),
             log_callback=self.log_signal.emit,
             send2bot=send2bot,
             frame_callback=frame_cb,
@@ -184,7 +218,7 @@ class ParallelRenderWorker(QThread):
         return row, "Failed", None
 
     def _finish_job(self, item, status):
-        row = item["row"]
+        row = self._ui_row(item["row"])
         end_time = datetime.now().strftime("%H:%M:%S")
         self.update_row_signal.emit(row, status, "", end_time)
 
@@ -192,6 +226,8 @@ class ParallelRenderWorker(QThread):
         reset_stop_flag()
         begin_queue_session()
         self._last_batch_size = 0
+        self._row_ui_map = {}
+        self._in_flight_rows = set()
         interrupted = False
 
         def run_serial():
@@ -235,7 +271,7 @@ class ParallelRenderWorker(QThread):
 
         def run_parallel():
             nonlocal interrupted
-            in_flight_rows = set()
+            in_flight_rows = self._in_flight_rows
             futures = {}
             executor = ThreadPoolExecutor(max_workers=self.max_parallel)
             self._executor = executor

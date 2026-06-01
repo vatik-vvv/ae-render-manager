@@ -132,6 +132,30 @@ def is_log_frozen(row):
         return int(row) in _log_frozen_rows
 
 
+def swap_rows(row_a, row_b):
+    """Move progress state when two queue rows are swapped in the UI."""
+    row_a, row_b = int(row_a), int(row_b)
+    if row_a == row_b:
+        return
+    with _lock:
+        job_a = _jobs.pop(row_a, None)
+        job_b = _jobs.pop(row_b, None)
+        if job_a:
+            job_a.row = row_b
+            _jobs[row_b] = job_a
+        if job_b:
+            job_b.row = row_a
+            _jobs[row_a] = job_b
+        frozen_a = row_a in _log_frozen_rows
+        frozen_b = row_b in _log_frozen_rows
+        _log_frozen_rows.discard(row_a)
+        _log_frozen_rows.discard(row_b)
+        if frozen_a:
+            _log_frozen_rows.add(row_b)
+        if frozen_b:
+            _log_frozen_rows.add(row_a)
+
+
 def end_job(row):
     row = int(row)
     with _lock:

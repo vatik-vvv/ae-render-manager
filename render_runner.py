@@ -8,14 +8,19 @@ import uuid
 
 from aerender_log_preview import AerenderLogPreviewWatcher
 from ae_render_settings import (
+    USE_QUEUE_RS,
     is_use_queue_rs,
     resolve_frame_range,
     resolve_frame_value,
+    resolve_om_template,
     resolve_rs_template,
 )
-from aerender_log import describe_aerender_early_exit, parse_aerender_log_summary
+from aerender_log import (
+    describe_aerender_early_exit,
+    format_render_failure_hints,
+    parse_aerender_log_summary,
+)
 from ae_paths import (
-    ae_render_process_running,
     all_frames_exist,
     count_existing_frames,
     ensure_output_directory,
@@ -27,9 +32,8 @@ from app_paths import logs_dir
 from frame_preview import FramePreviewWatcher, frame_output_path
 from process_tree import (
     collect_ae_child_pids,
-    kill_aerender_processes,
-    kill_all_ae_render_processes,
     kill_process_tree,
+    pid_is_alive,
 )
 from output_cleanup import (
     begin_render_session,
@@ -108,8 +112,31 @@ def _kill_session(session, force=True):
             pass
     all_pids = {session.root_pid} | set(session.child_pids)
     for pid in all_pids:
-        kill_process_tree(pid, force=force)
-    kill_aerender_processes(session.project, extra_pids=list(all_pids))
+        if pid:
+            kill_process_tree(pid, force=force)
+
+
+def _sessions_still_running():
+    with _active_lock:
+        sessions = list(_active_sessions)
+    for session in sessions:
+        if session.proc.poll() is None:
+            return True
+        _refresh_session_children(session)
+    return False
+
+
+def _session_tree_busy(session):
+    """True while this job's aerender or its After Effects child processes are alive."""
+    if session is None:
+        return False
+    if session.proc.poll() is None:
+        return True
+    _refresh_session_children(session)
+    for pid in {session.root_pid} | set(session.child_pids):
+        if pid_is_alive(pid):
+            return True
+    return False
 
 
 def _notify_telegram(message, log_callback=None):
@@ -174,6 +201,9 @@ def build_aerender_cmd(job, log_path=None, segment_start=None, segment_end=None)
     rs = resolve_rs_template(job)
     if rs:
         cmd.extend(["-RStemplate", rs])
+    om = resolve_om_template(job)
+    if om:
+        cmd.extend(["-OMtemplate", om])
     return cmd
 
 
@@ -204,14 +234,22 @@ def is_stop_requested():
 
 
 def kill_active_renders(log_callback=None):
-    """End aerender/AfterFX processes without deleting output files."""
+    """End aerender processes started by this app (tracked sessions only)."""
     with _active_lock:
         sessions = list(_active_sessions)
+    killed = 0
     for session in sessions:
         _kill_session(session, force=True)
-    kill_all_ae_render_processes(log_callback=log_callback)
+        killed += 1
     with _active_lock:
         _active_sessions.clear()
+    if log_callback:
+        if killed:
+            log_callback(
+                f"Stop: ended {killed} render process tree(s) started by this app."
+            )
+        else:
+            log_callback("Stop: no active render sessions tracked by this app.")
     return bool(sessions)
 
 
@@ -224,17 +262,20 @@ def stop_render(log_callback=None):
     return had_sessions
 
 
-def _wait_ae_processes_idle(log_callback=None, max_wait=180):
+def _wait_sessions_idle(log_callback=None, max_wait=180):
+    """Wait only for aerender trees this app started — not other After Effects windows."""
     deadline = time.monotonic() + max_wait
-    while time.monotonic() < deadline and ae_render_process_running():
+    while time.monotonic() < deadline and _sessions_still_running():
         if log_callback:
-            log_callback("Waiting for After Effects / aerender to exit before next step…")
+            log_callback(
+                "Waiting for this app's aerender process(es) to exit before next step…"
+            )
         time.sleep(2.0)
 
 
 def finalize_queue_render(log_callback=None):
-    """After a successful queue run: ensure no stray aerender, keep all outputs."""
-    _wait_ae_processes_idle(log_callback=log_callback)
+    """After a successful queue run: wait for our aerender trees, then clear session list."""
+    _wait_sessions_idle(log_callback=log_callback)
     kill_active_renders(log_callback=log_callback)
 
 
@@ -262,6 +303,7 @@ def run_render(
     job_label="",
     full_queue=True,
     use_proxy=False,
+    om_template_scanned="",
 ):
     global _stop_requested
 
@@ -279,6 +321,7 @@ def run_render(
         "full_queue": full_queue,
         "use_proxy": use_proxy,
         "rs_template_scanned": rs_template_scanned or rs_template,
+        "om_template_scanned": om_template_scanned or "",
         "increment": increment,
     }
 
@@ -302,8 +345,6 @@ def run_render(
 
     if not use_full_queue and skip_existing_frames:
         if log_callback:
-            from ae_render_settings import USE_QUEUE_RS, is_use_queue_rs
-
             if is_use_queue_rs(rs_template):
                 log_callback(
                     f"{prefix}Skip + render settings from AE queue "
@@ -501,7 +542,7 @@ def run_render(
             segment_end = None
             if can_verify_frames and (skip_existing_frames or pass_num > 1):
                 if pass_num > 1:
-                    _wait_ae_processes_idle(log_callback=log_callback, max_wait=180)
+                    _wait_sessions_idle(log_callback=log_callback, max_wait=180)
                 segment_start = first_missing_frame(
                     output_path, frame_start, frame_end, increment
                 )
@@ -540,6 +581,29 @@ def run_render(
             if log_callback:
                 label = "Command" if pass_num == 1 else f"Pass {pass_num} command"
                 log_callback(f"{prefix}{label}: {' '.join(cmd)}")
+                rs_override = resolve_rs_template(job)
+                om_override = resolve_om_template(job)
+                rs_ui = (job.get("rs_template") or "").strip()
+                if is_use_queue_rs(rs_ui):
+                    log_callback(
+                        f"{prefix}Render settings: (Use queue) from AE render queue"
+                        + (
+                            " — proxy enabled on this item"
+                            if job.get("use_proxy") in (True, "1", 1)
+                            else ""
+                        )
+                    )
+                elif rs_override:
+                    if om_override:
+                        log_callback(
+                            f"{prefix}RS override: {rs_override} | "
+                            f"Output module: {om_override}"
+                        )
+                    else:
+                        log_callback(
+                            f"{prefix}Warning: render settings '{rs_override}' without an "
+                            "output module template — set RS to (Use queue) or re-scan the AEP."
+                        )
 
             proc = subprocess.Popen(cmd, **popen_kw)
             session = _RenderSession(proc, project)
@@ -690,9 +754,9 @@ def run_render(
                 preview_watcher.flush()
             if log_preview and pass_num == 1:
                 log_preview.flush()
-            _unregister_session(session)
 
             if is_stop_requested():
+                _unregister_session(session)
                 duration_sec = time.monotonic() - render_started_at
                 status_label, err_detail = status_from_render_result(
                     -1, stopped=True
@@ -740,6 +804,7 @@ def run_render(
                 )
 
             if retcode != 0:
+                _unregister_session(session)
                 _emit_progress(last_ratio)
                 break
 
@@ -767,7 +832,9 @@ def run_render(
                         disk_total=tot,
                     ),
                     on_poll=_poll_telegram_previews,
+                    ae_busy_check=lambda s=session: _session_tree_busy(s),
                 )
+                _unregister_session(session)
                 if progress_row is not None and total and existing is not None:
                     set_ratio_from_disk(progress_row, existing, total)
                     _emit_progress(
@@ -779,6 +846,7 @@ def run_render(
                     )
             else:
                 existing, total = None, None
+                _unregister_session(session)
 
             if progress_row is not None:
                 set_log_progress_frozen(progress_row, False)
@@ -835,6 +903,15 @@ def run_render(
                     log_callback(
                         f"{prefix}Render incomplete — not all frames in range are on disk."
                     )
+                    for hint in format_render_failure_hints(
+                        log_path,
+                        retcode,
+                        output_path,
+                        frame_start,
+                        frame_end,
+                        job=job,
+                    ):
+                        log_callback(f"{prefix}  {hint}")
                 duration_sec = time.monotonic() - render_started_at
                 detail = (
                     f"{existing}/{total} frame(s) on disk"
@@ -922,7 +999,6 @@ def run_render(
 
 
 def stop_all_renders(log_callback=None):
-    """Hard stop — used when closing the app."""
+    """Hard stop — used when closing the app. Only kills renders this app started."""
     stop_render(log_callback=log_callback)
-    kill_aerender_processes(project_path=None)
     return True

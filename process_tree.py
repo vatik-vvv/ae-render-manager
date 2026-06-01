@@ -109,6 +109,31 @@ def _taskkill_images():
 
 
 
+def pid_is_alive(pid):
+    """True if a process id is still running."""
+    if pid is None or pid <= 0:
+        return False
+    try:
+        import psutil
+
+        return psutil.pid_exists(int(pid))
+    except ImportError:
+        if os.name != "nt":
+            return False
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {int(pid)}", "/NH"],
+                capture_output=True,
+                text=True,
+                creationflags=CREATE_NO_WINDOW,
+                timeout=8,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        out = (result.stdout or "").lower()
+        return str(int(pid)) in out and "no tasks are running" not in out
+
+
 def kill_process_tree(pid, force=True):
 
     if pid is None or pid <= 0:
