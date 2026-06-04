@@ -321,7 +321,13 @@ class ParallelRenderWorker(QThread):
                         break
                     time.sleep(0.5)
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                try:
+                    if interrupted:
+                        executor.shutdown(wait=False, cancel_futures=True)
+                    else:
+                        executor.shutdown(wait=True, cancel_futures=True)
+                except Exception:
+                    pass
                 self._executor = None
 
         if self.max_parallel <= 1:
@@ -329,10 +335,23 @@ class ParallelRenderWorker(QThread):
         else:
             run_parallel()
 
-        was_stopped = interrupted or is_stop_requested()
+        was_stopped = (
+            interrupted or is_stop_requested() or self.isInterruptionRequested()
+        )
         if was_stopped:
             stop_render(log_callback=self.log_signal.emit)
         else:
             finalize_queue_render(log_callback=self.log_signal.emit)
         self.finished_signal.emit(was_stopped)
         reset_stop_flag()
+
+    def shutdown_executor(self):
+        """Release thread-pool workers (avoids orphaned non-daemon threads on exit)."""
+        ex = self._executor
+        if ex is None:
+            return
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+        self._executor = None

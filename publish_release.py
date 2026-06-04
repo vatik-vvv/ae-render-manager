@@ -103,6 +103,10 @@ Pre-built package — no Python or compile step required.
         rel = _api("GET", f"{base}/releases/tags/{tag}", token)
         release_id = rel["id"]
         print(f"Release {tag} already exists (id={release_id}), uploading asset…")
+        for asset in rel.get("assets", []):
+            if asset.get("name") == zip_path.name:
+                _api("DELETE", f"{base}/releases/assets/{asset['id']}", token)
+                print(f"Removed previous asset: {zip_path.name}")
     except HTTPError as err:
         if err.code != 404:
             raise

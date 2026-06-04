@@ -18,6 +18,7 @@ def _local_py_hiddenimports():
 extra_datas = [
     ("config.example.json", "."),
     ("scan_render_queue.jsx", "."),
+    ("logo_met2.png", "."),
 ]
 extra_binaries = []
 hiddenimports = _local_py_hiddenimports() + [

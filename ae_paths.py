@@ -219,7 +219,11 @@ def wait_for_render_output_idle(
             "(render not finished yet)."
         )
 
+    from render_runner import is_stop_requested
+
     while time.monotonic() < deadline:
+        if is_stop_requested():
+            break
         if time.monotonic() - wait_started >= max_wait:
             break
         existing, total = count_existing_frames(

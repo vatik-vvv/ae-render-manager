@@ -12,12 +12,46 @@ QWidget, QMainWindow, QDialog {
     background-color: #353535;
     color: #ffffff;
 }
-QLineEdit, QTextEdit, QListWidget, QTableWidget, QComboBox, QSpinBox {
+QLineEdit, QTextEdit, QListWidget, QTableWidget, QComboBox {
     background-color: #191919;
     color: #ffffff;
     border: 1px solid #555555;
     padding: 3px;
     selection-background-color: #5a4a72;
+}
+QSpinBox {
+    background-color: #191919;
+    color: #ffffff;
+    border: 1px solid #555555;
+    padding: 4px 6px;
+    min-height: 28px;
+    selection-background-color: #5a4a72;
+}
+QPushButton#parallelStepUp, QPushButton#parallelStepDown {
+    background-color: #5a5a5a;
+    color: #f0f0f0;
+    border: 1px solid #777777;
+    padding: 0;
+    font-size: 10px;
+    font-weight: bold;
+}
+QPushButton#parallelStepUp {
+    border-bottom: none;
+}
+QPushButton#parallelStepDown {
+    border-top: none;
+}
+QPushButton#parallelStepUp:hover, QPushButton#parallelStepDown:hover {
+    background-color: #707070;
+}
+QPushButton#parallelStepUp:pressed, QPushButton#parallelStepDown:pressed {
+    background-color: #888888;
+}
+QLabel#appTitleLabel {
+    font-size: 17px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #e8e8e8;
 }
 QPushButton {
     background-color: #353535;
@@ -93,6 +127,11 @@ def style_log_panel(text_edit):
     )
 
 
+def style_parallel_step_buttons(up_btn, down_btn):
+    up_btn.setObjectName("parallelStepUp")
+    down_btn.setObjectName("parallelStepDown")
+
+
 def style_muted_label(label):
     label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
 
@@ -124,6 +163,24 @@ class StatusProgressDelegate(QStyledItemDelegate):
         style = opt.widget.style() if opt.widget else QApplication.style()
         opt.textElideMode = Qt.TextElideMode.ElideRight
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+
+def apply_zone2_buttons(remove_btn, scan_selected_btn, scan_all_btn):
+    """Zone 2: Remove = red when enabled; scan buttons = green when enabled."""
+    remove_btn.setStyleSheet(
+        "QPushButton:enabled { background-color: #c62828; color: #fff; "
+        "border: 1px solid #b71c1c; }"
+        "QPushButton:disabled { background-color: #555; color: #aaa; "
+        "border: 1px solid #555; }"
+    )
+    scan_style = (
+        "QPushButton:enabled { background-color: #4CAF50; color: #fff; "
+        "border: 1px solid #3d8b40; }"
+        "QPushButton:disabled { background-color: #555; color: #aaa; "
+        "border: 1px solid #555; }"
+    )
+    scan_selected_btn.setStyleSheet(scan_style)
+    scan_all_btn.setStyleSheet(scan_style)
 
 
 def apply_action_buttons(start_btn, stop_btn, remove_btn=None):

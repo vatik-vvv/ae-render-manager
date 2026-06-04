@@ -266,6 +266,8 @@ def _wait_sessions_idle(log_callback=None, max_wait=180):
     """Wait only for aerender trees this app started — not other After Effects windows."""
     deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline and _sessions_still_running():
+        if is_stop_requested():
+            break
         if log_callback:
             log_callback(
                 "Waiting for this app's aerender process(es) to exit before next step…"
@@ -273,9 +275,9 @@ def _wait_sessions_idle(log_callback=None, max_wait=180):
         time.sleep(2.0)
 
 
-def finalize_queue_render(log_callback=None):
+def finalize_queue_render(log_callback=None, max_wait=60):
     """After a successful queue run: wait for our aerender trees, then clear session list."""
-    _wait_sessions_idle(log_callback=log_callback)
+    _wait_sessions_idle(log_callback=log_callback, max_wait=max_wait)
     kill_active_renders(log_callback=log_callback)
 
 

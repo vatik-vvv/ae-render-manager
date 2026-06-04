@@ -29,6 +29,15 @@ def bundled_script(filename):
     return fallback if os.path.isfile(fallback) else path
 
 
+def find_bundled_file(filename):
+    """Resolve a bundled asset (logo, icons) for dev and frozen runs."""
+    for base in (bundle_dir(), app_dir()):
+        path = os.path.join(base, filename)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
 def config_path():
     return os.path.join(app_dir(), "config.json")
 

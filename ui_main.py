@@ -1,11 +1,16 @@
 import json
+import logging
 import os
 import re
 import subprocess
 import threading
+import time
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+logger = logging.getLogger(__name__)
+
+from PySide6.QtCore import QEventLoop, Qt, QTimer
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,6 +28,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QApplication,
     QProgressBar,
     QPushButton,
     QSpinBox,
@@ -36,11 +42,11 @@ from PySide6.QtWidgets import (
 
 from ae_paths import detect_ae_installs, get_aerender_path, get_max_parallel
 from ae_render_settings import USE_QUEUE_RS, get_rs_template_options, resolve_frame_range
-from app_paths import config_path
+from app_paths import config_path, find_bundled_file
 from parallel_pool import ParallelRenderWorker
 from queue_finalize import handle_queue_finished, run_system_sleep
 from queue_job_source import QueueJobBridge
-from ui_widgets import AepDropList
+from ui_widgets import AepDropList, ParallelSpinWidget
 from render_progress_tracker import clear_jobs, is_log_frozen, poll_all, swap_rows
 from render_runner import stop_all_renders, stop_render
 from scan_worker import ScanWorker
@@ -49,6 +55,7 @@ from ui_theme import (
     RENDER_PROGRESS_ROLE,
     StatusProgressDelegate,
     apply_action_buttons,
+    apply_zone2_buttons,
     style_log_panel,
     style_muted_label,
 )
@@ -143,6 +150,7 @@ TRANSLATIONS = {
             "this is not the same as closing only the render manager.)"
         ),
         "confirm_sleep_title": "Sleep computer?",
+        "clear_log": "Clear log",
     },
     "ru": {
         "title": "Менеджер рендера After Effects",
@@ -195,6 +203,7 @@ TRANSLATIONS = {
             "это не закрытие только менеджера рендера.)"
         ),
         "confirm_sleep_title": "Усыпить компьютер?",
+        "clear_log": "Очистить лог",
     },
 }
 
@@ -207,6 +216,7 @@ class RenderManager(QMainWindow):
         self._saving_state = False
         self.queue_thread = None
         self.scan_thread = None
+        self._shutting_down = False
         self._scan_queue = []
         self._scan_added = 0
         self._jobs_total = 0
@@ -245,8 +255,21 @@ class RenderManager(QMainWindow):
         else:
             self.remove_queue_btn.setEnabled(True)
 
+    def _scan_in_progress(self):
+        return self.scan_thread is not None and self.scan_thread.isRunning()
+
     def _update_aep_remove_btn(self):
-        self.remove_aep_btn.setEnabled(bool(self.aep_list.selectedItems()))
+        has_selection = bool(self.aep_list.selectedItems())
+        has_projects = self.aep_list.count() > 0
+        scanning = self._scan_in_progress()
+        self.remove_aep_btn.setEnabled(has_selection and not scanning)
+        self.scan_selected_btn.setEnabled(
+            has_selection and not scanning
+        )
+        self.scan_all_btn.setEnabled(has_projects and not scanning)
+        apply_zone2_buttons(
+            self.remove_aep_btn, self.scan_selected_btn, self.scan_all_btn
+        )
 
     def tr(self, key):
         return TRANSLATIONS[self.current_language].get(key, key)
@@ -292,14 +315,31 @@ class RenderManager(QMainWindow):
         if dur_item:
             dur_item.setText(render_time)
 
+    def _header_logo_height_px(self):
+        """Slightly taller than the title line; capped at 35px."""
+        title_h = self.app_title_label.fontMetrics().height()
+        cap_h = 35
+        target_h = int(round(title_h * 1.12))
+        return min(target_h, cap_h) if cap_h > 0 else target_h
+
+    def _apply_header_logo(self, logo_path):
+        if not logo_path:
+            return
+        logo_px = QPixmap(logo_path)
+        if logo_px.isNull():
+            return
+        logo_h = self._header_logo_height_px()
+        scaled_logo = logo_px.scaledToHeight(
+            logo_h, Qt.TransformationMode.SmoothTransformation
+        )
+        self.app_logo_label.setPixmap(scaled_logo)
+        self.app_logo_label.setFixedSize(scaled_logo.size())
+
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
         root.setContentsMargins(6, 6, 6, 6)
-
-        self._splitter_main = QSplitter(Qt.Vertical)
-        root.addWidget(self._splitter_main)
 
         z1 = QGroupBox()
         self.zone1_box = z1
@@ -328,11 +368,28 @@ class RenderManager(QMainWindow):
         self.telegram_btn.clicked.connect(self._open_telegram_dialog)
         self.lang_btn.clicked.connect(self._switch_language)
 
-        z1_host = QWidget()
-        z1_layout = QVBoxLayout(z1_host)
-        z1_layout.setContentsMargins(0, 0, 0, 0)
-        z1_layout.addWidget(z1)
-        self._splitter_main.addWidget(z1_host)
+        self._top_bar = QWidget()
+        self._top_bar.setObjectName("appHeader")
+        top_layout = QHBoxLayout(self._top_bar)
+        top_layout.setContentsMargins(0, 0, 0, 6)
+        top_layout.setSpacing(12)
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.app_title_label = QLabel("AE RENDER MANAGER")
+        self.app_title_label.setObjectName("appTitleLabel")
+
+        self.app_logo_label = QLabel()
+        self.app_logo_label.setScaledContents(False)
+        self._apply_header_logo(find_bundled_file("logo_met2.png"))
+
+        top_layout.addWidget(
+            self.app_logo_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        top_layout.addWidget(
+            self.app_title_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        top_layout.addWidget(z1, 1)
+        root.addWidget(self._top_bar)
 
         self._splitter_content = QSplitter(Qt.Vertical)
 
@@ -344,6 +401,7 @@ class RenderManager(QMainWindow):
         self.remove_aep_btn = QPushButton()
         self.remove_aep_btn.setEnabled(False)
         self.scan_selected_btn = QPushButton()
+        self.scan_selected_btn.setEnabled(False)
         self.scan_all_btn = QPushButton()
         self.add_full_queue_btn = QPushButton()
         row2.addWidget(self.add_aep_btn)
@@ -377,24 +435,32 @@ class RenderManager(QMainWindow):
         self.zone5_box = z5
         z5l = QVBoxLayout(z5)
         ctrl = QHBoxLayout()
-        self.max_parallel_spin = QSpinBox()
+        ctrl.setSpacing(8)
+        ctrl_row_min_h = 36
+        self.max_parallel_spin = ParallelSpinWidget()
         self.max_parallel_spin.setRange(1, 8)
         self.max_parallel_spin.setValue(get_max_parallel())
         self.max_parallel_spin.setToolTip(
-            "Each parallel job starts a separate aerender instance (high RAM use)."
+            "Each parallel job starts a separate aerender instance (high RAM use). "
+            "Use Up/Down keys or the step buttons."
         )
+        self.max_parallel_spin.valueChanged.connect(lambda _v: self.save_state())
         self.start_btn = QPushButton()
         self.stop_btn = QPushButton()
         self.remove_queue_btn = QPushButton()
         self.remove_queue_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.parallel_label = QLabel()
+        self.parallel_label.setMinimumHeight(ctrl_row_min_h)
         ctrl.addWidget(self.parallel_label)
         ctrl.addWidget(self.max_parallel_spin)
+        for btn in (self.start_btn, self.stop_btn, self.remove_queue_btn):
+            btn.setMinimumHeight(ctrl_row_min_h)
         ctrl.addWidget(self.start_btn)
         ctrl.addWidget(self.stop_btn)
         ctrl.addWidget(self.remove_queue_btn)
         self.sleep_on_finish_chk = QCheckBox()
+        self.sleep_on_finish_chk.setMinimumHeight(ctrl_row_min_h)
         self.sleep_on_finish_chk.setToolTip(
             "When the queue completes successfully, Windows will suspend the entire PC "
             "(monitor off, app frozen until wake). Not used when you press Stop."
@@ -447,26 +513,32 @@ class RenderManager(QMainWindow):
         log_host = QWidget()
         log_layout = QVBoxLayout(log_host)
         log_layout.setContentsMargins(0, 0, 0, 0)
+        log_header = QWidget()
+        log_header_layout = QHBoxLayout(log_header)
+        log_header_layout.setContentsMargins(0, 0, 0, 0)
         log_label = QLabel("Log")
         log_label.setObjectName("logZoneLabel")
         style_muted_label(log_label)
-        log_layout.addWidget(log_label)
+        log_header_layout.addWidget(log_label)
+        log_header_layout.addStretch()
+        self.clear_log_btn = QPushButton()
+        self.clear_log_btn.setObjectName("clearLogBtn")
+        self.clear_log_btn.setMaximumWidth(110)
+        self.clear_log_btn.clicked.connect(self._clear_log)
+        log_header_layout.addWidget(self.clear_log_btn)
+        log_layout.addWidget(log_header)
         log_layout.addWidget(self.log_output)
         self._splitter_queue_log.addWidget(log_host)
 
         self._splitter_content.addWidget(self._splitter_queue_log)
-        self._splitter_main.addWidget(self._splitter_content)
+        root.addWidget(self._splitter_content, 1)
 
-        self._splitter_main.setStretchFactor(0, 0)
-        self._splitter_main.setStretchFactor(1, 1)
         self._splitter_content.setStretchFactor(0, 1)
         self._splitter_content.setStretchFactor(1, 3)
         self._splitter_queue_log.setStretchFactor(0, 4)
         self._splitter_queue_log.setStretchFactor(1, 1)
-        self._splitter_main.setSizes([72, 700])
         self._splitter_content.setSizes([160, 520])
         self._splitter_queue_log.setSizes([380, 140])
-        self._splitter_main.splitterMoved.connect(self._on_splitter_moved)
         self._splitter_content.splitterMoved.connect(self._on_splitter_moved)
         self._splitter_queue_log.splitterMoved.connect(self._on_splitter_moved)
 
@@ -475,6 +547,10 @@ class RenderManager(QMainWindow):
         self.render_progress_label.setStyleSheet("color: #00BFFF; font-size: 12px;")
         style_log_panel(self.log_output)
         apply_action_buttons(self.start_btn, self.stop_btn, self.remove_queue_btn)
+        apply_zone2_buttons(
+            self.remove_aep_btn, self.scan_selected_btn, self.scan_all_btn
+        )
+        self._apply_header_logo(find_bundled_file("logo_met2.png"))
         self.aep_list.setAlternatingRowColors(True)
         self._update_global_progress(0, 0, -1, "")
 
@@ -498,6 +574,7 @@ class RenderManager(QMainWindow):
         self.start_btn.setText(t["start"])
         self.stop_btn.setText(t["stop"])
         self.remove_queue_btn.setText(t["remove_queue"])
+        self.clear_log_btn.setText(t["clear_log"])
         self.sleep_on_finish_chk.setText(t["sleep_on_finish"])
         self.queue_hint_label.setText(t["queue_hint"])
         self.queue_table.setHorizontalHeaderLabels(t["queue_headers"])
@@ -506,6 +583,9 @@ class RenderManager(QMainWindow):
         self.current_language = "ru" if self.current_language == "en" else "en"
         self._apply_language()
         self.save_state()
+
+    def _clear_log(self):
+        self.log_output.clear()
 
     def log(self, message):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -833,11 +913,11 @@ class RenderManager(QMainWindow):
             self.log(f"Queued full project: {os.path.basename(aep)}")
 
     def _scan_selected_aep(self):
-        item = self.aep_list.currentItem()
-        if not item:
+        selected = self.aep_list.selectedItems()
+        if not selected:
             self.log("Select an AEP in the list first.")
             return
-        self._start_scan([item.text()])
+        self._start_scan([selected[0].text()])
 
     def _scan_all_aeps(self):
         paths = [self.aep_list.item(i).text() for i in range(self.aep_list.count())]
@@ -858,13 +938,11 @@ class RenderManager(QMainWindow):
     def _scan_next(self):
         if not self._scan_queue:
             self.log(f"Scan finished — added {self._scan_added} queue item(s).")
-            self.scan_selected_btn.setEnabled(True)
-            self.scan_all_btn.setEnabled(True)
+            self._update_aep_remove_btn()
             return
         aep_path = self._scan_queue.pop(0)
         self.log(f"Scanning render queue: {os.path.basename(aep_path)}")
-        self.scan_selected_btn.setEnabled(False)
-        self.scan_all_btn.setEnabled(False)
+        self._update_aep_remove_btn()
         self.scan_thread = ScanWorker(aep_path)
         self.scan_thread.log_signal.connect(self.log)
         self.scan_thread.finished_signal.connect(self._on_scan_finished)
@@ -1296,7 +1374,6 @@ class RenderManager(QMainWindow):
             data.setdefault("ui", {})
             data["ui"]["width"] = self.width()
             data["ui"]["height"] = self.height()
-            data["ui"]["splitter_main"] = self._splitter_main.sizes()
             data["ui"]["splitter_content"] = self._splitter_content.sizes()
             data["ui"]["splitter_queue_log"] = self._splitter_queue_log.sizes()
             data["ui"]["queue_column_widths"] = self._queue_column_widths()
@@ -1329,6 +1406,7 @@ class RenderManager(QMainWindow):
         for path in data.get("aep_files", []):
             if path:
                 self.aep_list.addItem(path)
+        self._update_aep_remove_btn()
         self.queue_table.blockSignals(True)
         try:
             self.queue_table.setRowCount(0)
@@ -1371,7 +1449,6 @@ class RenderManager(QMainWindow):
         if not ui:
             return
         for key, splitter in (
-            ("splitter_main", self._splitter_main),
             ("splitter_content", self._splitter_content),
             ("splitter_queue_log", self._splitter_queue_log),
         ):
@@ -1721,6 +1798,9 @@ class RenderManager(QMainWindow):
         self._apply_row_progress(row, ratio)
 
     def _on_queue_finished(self, was_stopped):
+        if self._shutting_down:
+            self.queue_thread = None
+            return
         try:
             self._progress_timer.stop()
             clear_jobs()
@@ -1763,13 +1843,73 @@ class RenderManager(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def _disconnect_queue_worker(self, thread):
+        """Avoid UI/worker deadlock: worker must not block on signals while UI waits."""
+        for signal in (
+            thread.log_signal,
+            thread.update_row_signal,
+            thread.progress_signal,
+            thread.frame_progress_signal,
+            thread.disk_progress_signal,
+            thread.queue_count_signal,
+            thread.finished_signal,
+        ):
+            try:
+                signal.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+    def _wait_thread_stopped(self, thread, timeout_ms=3000):
+        """Wait for a QThread without freezing signal delivery (prevents deadlock)."""
+        if not thread or not thread.isRunning():
+            return True
+        app = QApplication.instance()
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while thread.isRunning() and time.monotonic() < deadline:
+            if app is not None:
+                app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
+            thread.wait(50)
+        return not thread.isRunning()
+
+    def _stop_background_threads(self, wait_ms=3000):
+        """Stop render/scan workers so the process can exit."""
+        stop_render()
+        stop_all_renders()
+
+        thread = self.queue_thread
+        if thread is not None:
+            if hasattr(thread, "shutdown_executor"):
+                thread.shutdown_executor()
+            if thread.isRunning():
+                thread.requestInterruption()
+                self._disconnect_queue_worker(thread)
+                if not self._wait_thread_stopped(thread, wait_ms):
+                    thread.terminate()
+                    thread.wait(2000)
+        self.queue_thread = None
+
+        scan = self.scan_thread
+        if scan is not None and scan.isRunning():
+            if not self._wait_thread_stopped(scan, min(wait_ms, 4000)):
+                scan.terminate()
+                scan.wait(2000)
+        self.scan_thread = None
+
     def closeEvent(self, event):
-        stop_all_renders(log_callback=self.log)
-        if self.queue_thread and self.queue_thread.isRunning():
-            self.queue_thread.requestInterruption()
-            self.queue_thread.wait(5000)
-        stop_all_renders(log_callback=self.log)
-        self.save_state()
+        self._progress_timer.stop()
+        self._shutting_down = True
+        try:
+            self._stop_background_threads()
+        except Exception as exc:
+            logger.warning("Shutdown cleanup: %s", exc)
+        try:
+            self.save_state()
+        except Exception:
+            pass
+        event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
         super().closeEvent(event)
 
     def _stop_render(self):

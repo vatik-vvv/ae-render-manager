@@ -106,20 +106,22 @@ def format_job_telegram(
         ]
     )
 
-    if duration_text:
-        lines.append(f"Total render time: {duration_text}")
-    elif duration_sec is not None:
-        lines.append(f"Total render time: {_format_elapsed(duration_sec)}")
-    else:
-        lines.append("Total render time: —")
+    # Timing is only meaningful when a job has finished (or failed after running).
+    if event != "start":
+        if duration_text:
+            lines.append(f"Total render time: {duration_text}")
+        elif duration_sec is not None:
+            lines.append(f"Total render time: {_format_elapsed(duration_sec)}")
+        elif event == "finish":
+            lines.append("Total render time: —")
 
-    avg_sec = duration_sec
-    if avg_sec is None and duration_text:
-        avg_sec = duration_text_to_seconds(duration_text)
-    if total and avg_sec:
-        lines.append(f"Avg frame time: {_avg_frame_time(avg_sec, total)}")
-    else:
-        lines.append("Avg frame time: —")
+        avg_sec = duration_sec
+        if avg_sec is None and duration_text:
+            avg_sec = duration_text_to_seconds(duration_text)
+        if total and avg_sec:
+            lines.append(f"Avg frame time: {_avg_frame_time(avg_sec, total)}")
+        elif event == "finish":
+            lines.append("Avg frame time: —")
 
     if status:
         lines.append(f"Status: {status}")
