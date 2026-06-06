@@ -165,8 +165,10 @@ class StatusProgressDelegate(QStyledItemDelegate):
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
 
 
-def apply_zone2_buttons(remove_btn, scan_selected_btn, scan_all_btn):
-    """Zone 2: Remove = red when enabled; scan buttons = green when enabled."""
+def apply_zone2_buttons(
+    remove_btn, scan_selected_btn, scan_all_btn, import_from_ae_btn=None
+):
+    """Zone 2: Remove = red when enabled; scan/import buttons = green when enabled."""
     remove_btn.setStyleSheet(
         "QPushButton:enabled { background-color: #c62828; color: #fff; "
         "border: 1px solid #b71c1c; }"
@@ -181,6 +183,8 @@ def apply_zone2_buttons(remove_btn, scan_selected_btn, scan_all_btn):
     )
     scan_selected_btn.setStyleSheet(scan_style)
     scan_all_btn.setStyleSheet(scan_style)
+    if import_from_ae_btn is not None:
+        import_from_ae_btn.setStyleSheet(scan_style)
 
 
 def apply_action_buttons(start_btn, stop_btn, remove_btn=None):

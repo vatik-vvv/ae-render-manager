@@ -46,6 +46,27 @@
     } catch (e) {}
   }
 
+  function formatIsoTimestamp(d) {
+    d = d || new Date();
+    function pad(n) {
+      return (n < 10 ? "0" : "") + n;
+    }
+    return (
+      d.getUTCFullYear() +
+      "-" +
+      pad(d.getUTCMonth() + 1) +
+      "-" +
+      pad(d.getUTCDate()) +
+      "T" +
+      pad(d.getUTCHours()) +
+      ":" +
+      pad(d.getUTCMinutes()) +
+      ":" +
+      pad(d.getUTCSeconds()) +
+      "Z"
+    );
+  }
+
   function safeStringify(obj) {
     if (typeof JSON !== "undefined" && JSON.stringify) {
       try {
@@ -144,7 +165,8 @@
 
   function finishErr(err) {
     writeError(err);
-    var msg = "AE Render Manager scan failed:\n" + String(err);
+    var action = $.global.AERM_MODE === "push" ? "push" : "scan";
+    var msg = "AE Render Manager " + action + " failed:\n" + String(err);
     if (autoQuit) {
       try {
         app.quit();
@@ -575,26 +597,11 @@
     return "";
   }
 
-  function runScan() {
-    debugLog("runScan start");
-    debugLog("workDir=" + workDir());
-    var args = readArgsFile();
-    projectPath = args.project;
-    outPath = args.output;
-    autoQuit = args.auto_quit === true || args.auto_quit === "true";
-
-    if (!projectPath || !outPath) {
-      throw new Error("scan_args.json requires project and output");
-    }
-
-    projectPath = new File(projectPath).fsName;
-    outPath = new File(outPath).fsName;
-    debugLog("project=" + projectPath);
-    debugLog("output=" + outPath);
-
-    ensureProject(projectPath);
-
+  function collectRenderQueueItems() {
     var items = [];
+    if (!app.project) {
+      return items;
+    }
     var rq = app.project.renderQueue;
     var n = rq.numItems;
     debugLog("renderQueue items: " + n);
@@ -652,7 +659,29 @@
         render_enabled: item.render,
       });
     }
+    return items;
+  }
 
+  function runScan() {
+    debugLog("runScan start");
+    debugLog("workDir=" + workDir());
+    var args = readArgsFile();
+    projectPath = args.project;
+    outPath = args.output;
+    autoQuit = args.auto_quit === true || args.auto_quit === "true";
+
+    if (!projectPath || !outPath) {
+      throw new Error("scan_args.json requires project and output");
+    }
+
+    projectPath = new File(projectPath).fsName;
+    outPath = new File(outPath).fsName;
+    debugLog("project=" + projectPath);
+    debugLog("output=" + outPath);
+
+    ensureProject(projectPath);
+
+    var items = collectRenderQueueItems();
     writeJson(outPath, {
       project: app.project.file ? app.project.file.fsName : projectPath,
       items: items,
@@ -661,8 +690,112 @@
     finishOk(items.length);
   }
 
+  function launchManager() {
+    // system.callSystem blocks AE until the child exits — use File.execute() instead.
+    try {
+      var pathFile = new File(workDir() + "/manager_exe_path.txt");
+      if (!pathFile.exists) {
+        debugLog("launchManager: no manager_exe_path.txt");
+        return false;
+      }
+      pathFile.open("r");
+      var exe = pathFile.read().replace(/^\s+|\s+$/g, "");
+      pathFile.close();
+      if (!exe) {
+        return false;
+      }
+      var exeFile = new File(exe);
+      if (!exeFile.exists) {
+        debugLog("launchManager: exe not found " + exe);
+        return false;
+      }
+      var launcher;
+      if ($.os.indexOf("Windows") >= 0) {
+        launcher = new File(workDir() + "/launch_aermanager.bat");
+        launcher.encoding = "UTF-8";
+        launcher.lineFeed = "Windows";
+        launcher.open("w");
+        launcher.write(
+          "@echo off\r\nstart \"\" \"" +
+            exe.replace(/"/g, '""') +
+            '\" --from-push\r\n'
+        );
+        launcher.close();
+      } else if ($.os.indexOf("Mac") >= 0) {
+        launcher = new File(workDir() + "/launch_aermanager.command");
+        launcher.encoding = "UTF-8";
+        launcher.lineFeed = "Unix";
+        launcher.open("w");
+        launcher.write(
+          "#!/bin/bash\nopen -n \"" +
+            exe.replace(/"/g, '\\"') +
+            '\" --args --from-push\n'
+        );
+        launcher.close();
+      } else {
+        return false;
+      }
+      launcher.execute();
+      debugLog("launchManager: execute " + launcher.fsName + " -> " + exe);
+      return true;
+    } catch (eLaunch) {
+      debugLog("launchManager failed: " + eLaunch);
+      return false;
+    }
+  }
+
+  function runPush() {
+    debugLog("runPush start");
+    debugLog("workDir=" + workDir());
+    autoQuit = false;
+    if (!app.project) {
+      throw new Error("No project open in After Effects.");
+    }
+    try {
+      if (!app.project.file || !app.project.file.fsName) {
+        throw new Error(
+          "Save the project first (File → Save), then run Push to Render Manager again."
+        );
+      }
+    } catch (eSave) {
+      throw new Error(
+        "Save the project first (File → Save), then run Push to Render Manager again."
+      );
+    }
+    projectPath = app.project.file.fsName;
+    outPath = workDir() + "/scan_result.json";
+    var items = collectRenderQueueItems();
+    writeJson(outPath, {
+      project: projectPath,
+      items: items,
+    });
+    writeJson(workDir() + "/scan_push.json", {
+      project: projectPath,
+      pushed_at: formatIsoTimestamp(new Date()),
+      item_count: items.length,
+    });
+    debugLog("push wrote " + items.length + " items");
+    var launched = launchManager();
+    try {
+      alert(
+        "Sent " +
+          items.length +
+          " render queue item(s) to AE Render Manager." +
+          (launched
+            ? "\nLaunching AE Render Manager…"
+            : "\nOpen AE Render Manager to import (or run the app once so auto-launch is registered).") +
+          "\n" +
+          projectPath
+      );
+    } catch (eAlert) {}
+  }
+
   try {
-    runScan();
+    if ($.global.AERM_MODE === "push") {
+      runPush();
+    } else {
+      runScan();
+    }
   } catch (err) {
     finishErr(err);
   }

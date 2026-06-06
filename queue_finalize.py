@@ -112,7 +112,7 @@ def handle_queue_finished(was_stopped, summaries, sleep_on_finish, log_callback=
     """
     Run after the worker thread exits (call from UI thread).
 
-    Returns True if the caller should put the PC to sleep (after optional confirm).
+    Returns True if the caller should put the PC to sleep.
     """
     try:
         if was_stopped:
@@ -151,8 +151,7 @@ def handle_queue_finished(was_stopped, summaries, sleep_on_finish, log_callback=
 
         if log_callback:
             log_callback(
-                "All frames verified on disk. Ready for system sleep "
-                "(confirm in dialog — this suspends the whole PC, not just the app)."
+                "All frames verified on disk. Putting the PC to sleep…"
             )
         return True
     except Exception as exc:
@@ -162,7 +161,7 @@ def handle_queue_finished(was_stopped, summaries, sleep_on_finish, log_callback=
 
 
 def run_system_sleep(log_callback=None):
-    """Suspend the workstation. Call from UI after user confirmation."""
+    """Suspend the workstation."""
     sleep_ok, sleep_err = request_system_sleep()
     if log_callback:
         if sleep_ok:

@@ -46,6 +46,7 @@ def ensure_files_exist():
 
 
 def main():
+    from_push = "--from-push" in sys.argv
     ensure_files_exist()
     app = QApplication(sys.argv)
     # closeEvent calls QApplication.quit(); keep default True as a fallback.
@@ -58,6 +59,8 @@ def main():
 
     instance_guard = SingleInstanceGuard()
     if not instance_guard.try_acquire():
+        if from_push:
+            return 0
         QMessageBox.information(
             None,
             "After Effects Render Manager",

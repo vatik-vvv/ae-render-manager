@@ -28,13 +28,25 @@ python main.py
 
 ## How it works
 
-1. In After Effects, add comps to **Window → Render Queue**, enable the items you want, set output paths and templates, **save the .aep**.
-2. In the manager: add AEP(s) → **Add to render queue** → **Start render**.
-3. Each job runs:
-   ```text
-   aerender -project "your.aep" -v ERRORS_AND_PROGRESS
-   ```
-   Adobe renders **all enabled queue items** in that project using the settings stored in the file (no ExtendScript scan).
+### Load queue items (pick one)
+
+**Push from open AE (fast, no second After Effects process)**
+
+1. In After Effects: add comps to **Window → Render Queue**, set output paths, **save the .aep**.
+2. Open **Window → AE Render Manager** and click **Send to AE Render Manager** (panel installed on first app start when permitted).
+3. AE Render Manager launches or raises automatically and imports rows once per push (or click **Import from AE** if needed).
+
+Run the manager at least once so it registers its exe path for auto-launch. In AE: **Edit → Preferences → Scripting → Allow Scripts to Write Files and Access Network** (required for launch from the panel).
+
+**Scan from disk (launches headless AfterFX)**
+
+1. Add the `.aep` to zone 2 in the manager.
+2. **Scan selected** or **Scan all** — reads the saved render queue from the project file.
+
+### Render
+
+1. Review the render queue table (RS **Use queue** is recommended).
+2. **Start render** — each row runs `aerender` with the scanned output path and frame range.
 
 ## Build executable
 
@@ -57,11 +69,13 @@ Output: `dist\AERenderManager.exe` (dark-themed GUI, no console). Place `config.
 | `ui_main.py` | PySide6 UI |
 | `render_runner.py` | `aerender` subprocess |
 | `parallel_pool.py` | Parallel queue worker |
+| `scan_queue.py` | Scan + push script deploy |
+| `scan_render_queue.jsx` | ExtendScript queue reader |
+| `push_render_queue.jsx` | Push from open AE session |
+| `push_render_panel.jsx` | Dockable AE panel (Window menu) |
 | `ae_paths.py` | AE install detection |
 | `telegram_notifier.py` | Telegram Bot API |
 | `app_paths.py` | Dev vs frozen exe paths |
-
-Legacy scan scripts (`scan_queue.py`, `scan_render_queue.jsx`) are unused by the UI but kept for reference.
 
 ## Parallel renders
 

@@ -4,10 +4,20 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 from ae_paths import get_afterfx_path
-from app_paths import app_dir, bundled_script, is_frozen, scan_args_path, scan_work_dir
+from app_paths import (
+    app_dir,
+    bundled_script,
+    is_frozen,
+    manager_exe_path_file,
+    scan_args_path,
+    scan_push_marker_path,
+    scan_result_path,
+    scan_work_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +91,24 @@ def _write_handoff_bootstrap(work_dir, main_jsx_path):
     return bootstrap
 
 
-def _deploy_to_ae_scripts(afterfx_path, jsx_src):
+def _deploy_scriptui_panel(afterfx_path, panel_jsx_src):
+    """Copy dockable panel to AE Scripts/ScriptUI Panels/ (Window menu)."""
+    panels_root = os.path.join(
+        os.path.dirname(afterfx_path), "Scripts", "ScriptUI Panels"
+    )
+    try:
+        os.makedirs(panels_root, exist_ok=True)
+        dest = os.path.join(panels_root, "AE Render Manager.jsx")
+        shutil.copy2(panel_jsx_src, dest)
+        return dest
+    except (PermissionError, OSError) as exc:
+        logger.warning("Cannot deploy ScriptUI panel: %s", exc)
+        return None
+
+
+def _deploy_to_ae_scripts(afterfx_path, jsx_src, push_jsx_src=None):
     """
-    Optionally copy scanner into AE Scripts/AERenderManager/.
+    Optionally copy scanner + push scripts into AE Scripts/AERenderManager/.
     Returns bootstrap path, or None if Program Files is not writable (no admin).
     """
     scripts_root = os.path.join(os.path.dirname(afterfx_path), "Scripts", "AERenderManager")
@@ -91,6 +116,8 @@ def _deploy_to_ae_scripts(afterfx_path, jsx_src):
         os.makedirs(scripts_root, exist_ok=True)
         dest_main = os.path.join(scripts_root, "scan_render_queue.jsx")
         shutil.copy2(jsx_src, dest_main)
+        if push_jsx_src and os.path.isfile(push_jsx_src):
+            shutil.copy2(push_jsx_src, os.path.join(scripts_root, "push_render_queue.jsx"))
         bootstrap = os.path.join(scripts_root, "run_ae_rm_scan.jsx")
         bootstrap_js = r"""(function () {
   var dir = new File($.fileName).parent;
@@ -100,6 +127,15 @@ def _deploy_to_ae_scripts(afterfx_path, jsx_src):
 })();"""
         with open(bootstrap, "w", encoding="utf-8", newline="\n") as f:
             f.write(bootstrap_js)
+        push_boot = os.path.join(scripts_root, "Push to Render Manager.jsx")
+        push_boot_js = r"""(function () {
+  var dir = new File($.fileName).parent;
+  var main = new File(dir.fsName + "/push_render_queue.jsx");
+  if (!main.exists) throw new Error("Missing push_render_queue.jsx in " + dir.fsName);
+  $.evalFile(main);
+})();"""
+        with open(push_boot, "w", encoding="utf-8", newline="\n") as f:
+            f.write(push_boot_js)
         return bootstrap
     except (PermissionError, OSError) as exc:
         logger.warning("Cannot deploy to AE Scripts folder: %s", exc)
@@ -171,57 +207,179 @@ def _scan_cmd(afterfx, script_path, aep_path=None, use_noui=True):
     return cmd
 
 
+def _needs_jsx_refresh(src, dest, required_marker=None):
+    if not os.path.isfile(dest):
+        return True
+    try:
+        with open(src, encoding="utf-8") as handle:
+            src_text = handle.read()
+        with open(dest, encoding="utf-8") as handle:
+            dest_text = handle.read()
+    except OSError:
+        return True
+    if required_marker:
+        src_ok = required_marker in src_text
+        dest_ok = required_marker in dest_text
+        if dest_ok and not src_ok:
+            return False
+        if src_ok and not dest_ok:
+            return True
+    return os.path.getmtime(src) > os.path.getmtime(dest)
+
+
+def _copy_bundled_jsx_to_work(filename, required_marker=None):
+    src = bundled_script(filename)
+    if not os.path.isfile(src):
+        raise FileNotFoundError(f"{filename} not found: {src}")
+    work = scan_work_dir()
+    stable = os.path.join(work, filename)
+    try:
+        if _needs_jsx_refresh(src, stable, required_marker=required_marker):
+            shutil.copy2(src, stable)
+    except OSError as exc:
+        logger.warning("Could not copy %s to work dir: %s", filename, exc)
+        return src
+    if is_frozen():
+        exe_copy = os.path.join(app_dir(), filename)
+        try:
+            if _needs_jsx_refresh(src, exe_copy, required_marker=required_marker):
+                shutil.copy2(src, exe_copy)
+        except OSError:
+            pass
+    return stable if os.path.isfile(stable) else src
+
+
 def _resolve_scan_jsx():
     """
     Return a stable path to scan_render_queue.jsx (PyInstaller bundles it in _MEIPASS).
     Also copies beside the .exe and into LocalAppData for AE -r / evalFile.
     """
-    src = bundled_script("scan_render_queue.jsx")
-    if not os.path.isfile(src):
+    stable = _copy_bundled_jsx_to_work(
+        "scan_render_queue.jsx", required_marker="function detectUseProxy"
+    )
+    if not os.path.isfile(stable):
         raise FileNotFoundError(
-            f"scan_render_queue.jsx not found: {src}\n"
+            "scan_render_queue.jsx not found.\n"
             "Rebuild the app so main.spec includes scan_render_queue.jsx in datas."
         )
+    return stable
 
-    work = scan_work_dir()
-    stable = os.path.join(work, "scan_render_queue.jsx")
 
-    def _needs_jsx_refresh(dest):
-        if not os.path.isfile(dest):
-            return True
-        try:
-            with open(src, encoding="utf-8") as handle:
-                src_text = handle.read()
-            dest_text = ""
-            if os.path.isfile(dest):
-                with open(dest, encoding="utf-8") as handle:
-                    dest_text = handle.read()
-        except OSError:
-            return True
-        src_ok = "function detectUseProxy" in src_text
-        dest_ok = "function detectUseProxy" in dest_text
-        if dest_ok and not src_ok:
-            return False
-        if src_ok and not dest_ok:
-            return True
-        return os.path.getmtime(src) > os.path.getmtime(dest)
+def _resolve_push_jsx():
+    """Return stable path to push_render_queue.jsx in LocalAppData."""
+    return _copy_bundled_jsx_to_work(
+        "push_render_queue.jsx", required_marker="AERM_MODE"
+    )
 
+
+def _resolve_panel_jsx():
+    """Return stable path to push_render_panel.jsx in LocalAppData."""
+    return _copy_bundled_jsx_to_work(
+        "push_render_panel.jsx", required_marker="Send to AE Render Manager"
+    )
+
+
+def deploy_push_scripts(log_callback=None):
+    """Copy scan + push JSX to LocalAppData and optionally AE Scripts menu."""
+    write_manager_exe_path()
+    scan_jsx = _resolve_scan_jsx()
+    push_jsx = _resolve_push_jsx()
+    panel_jsx = _resolve_panel_jsx()
+    afterfx = get_afterfx_path()
+    scripts_boot = None
+    panel_dest = None
+    if os.path.isfile(afterfx):
+        scripts_boot = _deploy_to_ae_scripts(afterfx, scan_jsx, push_jsx_src=push_jsx)
+        panel_dest = _deploy_scriptui_panel(afterfx, panel_jsx)
+    if log_callback:
+        log_callback(f"  Push script: {push_jsx}")
+        log_callback(f"  AE panel script: {panel_jsx}")
+        if panel_dest:
+            log_callback("  AE panel: Window → AE Render Manager")
+        elif scripts_boot:
+            log_callback(
+                "  AE menu: File → Scripts → Push to Render Manager "
+                f"({os.path.dirname(scripts_boot)})"
+            )
+        elif os.path.isfile(afterfx):
+            log_callback(
+                "  AE panel not installed (no write access to Program Files). "
+                "Copy push_render_panel.jsx to AE Support Files/Scripts/ScriptUI Panels/ "
+                "as AE Render Manager.jsx, or run the manager as administrator once."
+            )
+        else:
+            log_callback(
+                "  AE panel: start After Effects, then restart this app to deploy"
+            )
+    return scan_jsx, push_jsx
+
+
+def read_push_result():
+    """Load scan_result.json written by push_render_queue.jsx from open AE."""
+    out_json = scan_result_path()
+    if not _valid_result_file(out_json):
+        return None
     try:
-        if _needs_jsx_refresh(stable):
-            shutil.copy2(src, stable)
-    except OSError as exc:
-        logger.warning("Could not copy scanner to work dir: %s", exc)
-        stable = src
+        return _read_scan_result(out_json)
+    except RuntimeError:
+        return None
 
-    if is_frozen():
-        exe_copy = os.path.join(app_dir(), "scan_render_queue.jsx")
+
+def write_manager_exe_path():
+    """Write frozen exe path for AE push scripts to launch or raise the manager."""
+    path_file = manager_exe_path_file()
+    if not is_frozen():
         try:
-            if _needs_jsx_refresh(exe_copy):
-                shutil.copy2(src, exe_copy)
+            if os.path.isfile(path_file):
+                os.remove(path_file)
         except OSError:
             pass
+        return
+    exe = os.path.normpath(sys.executable)
+    try:
+        with open(path_file, "w", encoding="utf-8") as handle:
+            handle.write(exe.replace("\\", "/"))
+    except OSError as exc:
+        logger.warning("Cannot write manager_exe_path.txt: %s", exc)
 
-    return stable if os.path.isfile(stable) else src
+
+def read_push_marker():
+    """Load scan_push.json marker written after a successful AE push."""
+    marker = scan_push_marker_path()
+    if not os.path.isfile(marker):
+        return None
+    try:
+        with open(marker, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def push_marker_id(marker=None):
+    """Stable id for a push marker (used to skip already-imported pushes)."""
+    if marker is None:
+        marker = read_push_marker()
+    if not marker:
+        path = scan_push_marker_path()
+        if os.path.isfile(path):
+            return str(os.path.getmtime(path))
+        return ""
+    pushed_at = marker.get("pushed_at")
+    if pushed_at:
+        return str(pushed_at)
+    project = marker.get("project", "")
+    count = marker.get("item_count", "")
+    return f"{project}|{count}"
+
+
+def clear_push_marker():
+    marker = scan_push_marker_path()
+    try:
+        if os.path.isfile(marker):
+            os.remove(marker)
+    except OSError:
+        pass
 
 
 def _filter_stderr(stderr):
@@ -339,6 +497,7 @@ def scan_project(aep_path, log_callback=None, timeout=600):
         )
 
     jsx_path = os.path.normpath(_resolve_scan_jsx())
+    push_jsx = os.path.normpath(_resolve_push_jsx())
 
     out_json = os.path.join(work, "scan_result.json")
     err_file = os.path.join(work, "scan_last_error.txt")
@@ -365,7 +524,7 @@ def scan_project(aep_path, log_callback=None, timeout=600):
 
     handoff_bootstrap = _write_handoff_bootstrap(work, jsx_path)
     eval_launcher = _write_eval_launcher(work, jsx_path)
-    scripts_bootstrap = _deploy_to_ae_scripts(afterfx, jsx_path)
+    scripts_bootstrap = _deploy_to_ae_scripts(afterfx, jsx_path, push_jsx_src=push_jsx)
 
     if log_callback:
         log_callback(f"  Scanner: {jsx_path}")

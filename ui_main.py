@@ -9,7 +9,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-from PySide6.QtCore import QEventLoop, Qt, QTimer
+from PySide6.QtCore import QFileSystemWatcher, QEventLoop, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -42,7 +42,20 @@ from PySide6.QtWidgets import (
 
 from ae_paths import detect_ae_installs, get_aerender_path, get_max_parallel
 from ae_render_settings import USE_QUEUE_RS, get_rs_template_options, resolve_frame_range
-from app_paths import config_path, find_bundled_file
+from app_paths import (
+    config_path,
+    find_bundled_file,
+    scan_push_marker_path,
+    scan_work_dir,
+)
+from scan_queue import (
+    clear_push_marker,
+    deploy_push_scripts,
+    push_marker_id,
+    read_push_marker,
+    read_push_result,
+    write_manager_exe_path,
+)
 from parallel_pool import ParallelRenderWorker
 from queue_finalize import handle_queue_finished, run_system_sleep
 from queue_job_source import QueueJobBridge
@@ -112,6 +125,16 @@ TRANSLATIONS = {
         "remove_aep": "Remove",
         "scan_selected": "Scan selected → queue",
         "scan_all": "Scan all → queue",
+        "import_from_ae": "Import from AE",
+        "import_from_ae_tip": (
+            "In After Effects: Window → AE Render Manager → Send to AE Render Manager "
+            "(save the project first). New pushes import automatically."
+        ),
+        "import_from_ae_log": "Imported {n} item(s) from open AE — {aep}",
+        "import_from_ae_none": (
+            "No push data found. Use Window → AE Render Manager in After Effects first."
+        ),
+        "import_from_ae_dup": " ({d} duplicate RQ item(s) skipped)",
         "add_full_queue": "Add full project queue",
         "zone5": "3 - Render queue",
         "max_parallel": "Parallel:",
@@ -124,7 +147,7 @@ TRANSLATIONS = {
             "Start", "End", "Render time",
         ],
         "queue_hint": (
-            "Scan an AEP to load comps from its AE Render Queue. "
+            "Scan an AEP, or push from open AE (Window → AE Render Manager). "
             "RS preset «Use queue» keeps skip/proxy/output from the .aep (recommended with Skip). "
             "Parallel runs separate aerender jobs (different comps/AEPs). "
             "Right-click queue rows to move up/down."
@@ -144,12 +167,6 @@ TRANSLATIONS = {
         "move_down": "Move down",
         "move_queue_log": "Moved {n} queue row(s).",
         "sleep_on_finish": "Sleep entire PC when queue finishes",
-        "confirm_sleep": (
-            "All enabled renders finished and frames are on disk.\n\n"
-            "Put the whole computer to sleep now? (The app will suspend with Windows — "
-            "this is not the same as closing only the render manager.)"
-        ),
-        "confirm_sleep_title": "Sleep computer?",
         "clear_log": "Clear log",
     },
     "ru": {
@@ -165,6 +182,16 @@ TRANSLATIONS = {
         "remove_aep": "Удалить",
         "scan_selected": "Скан выбранного → очередь",
         "scan_all": "Скан всех → очередь",
+        "import_from_ae": "Импорт из AE",
+        "import_from_ae_tip": (
+            "В After Effects: Window → AE Render Manager → Send to AE Render Manager "
+            "(сначала сохраните проект). Новые push импортируются автоматически."
+        ),
+        "import_from_ae_log": "Импорт из открытого AE: {n} пункт(ов) — {aep}",
+        "import_from_ae_none": (
+            "Нет данных push. Сначала откройте Window → AE Render Manager в After Effects."
+        ),
+        "import_from_ae_dup": " ({d} дубликат(ов) RQ пропущено)",
         "add_full_queue": "Вся очередь проекта",
         "zone5": "3 - Очередь рендера",
         "max_parallel": "Параллельно:",
@@ -177,7 +204,7 @@ TRANSLATIONS = {
             "Начало", "Конец", "Время рендера",
         ],
         "queue_hint": (
-            "Сканируйте AEP для загрузки comps из Render Queue. "
+            "Скан AEP или push из открытого AE (Window → AE Render Manager). "
             "«Use queue» сохраняет skip/proxy/output из .aep (рекомендуется с Skip). "
             "Parallel — отдельные aerender для разных comps/AEP. "
             "ПКМ по строке — выше/ниже."
@@ -197,12 +224,6 @@ TRANSLATIONS = {
         "move_down": "Ниже",
         "move_queue_log": "Перемещено строк: {n}.",
         "sleep_on_finish": "Усыпить весь ПК после очереди",
-        "confirm_sleep": (
-            "Все включённые рендеры завершены, кадры на диске.\n\n"
-            "Усыпить весь компьютер? (Приложение уйдёт в сон вместе с Windows — "
-            "это не закрытие только менеджера рендера.)"
-        ),
-        "confirm_sleep_title": "Усыпить компьютер?",
         "clear_log": "Очистить лог",
     },
 }
@@ -217,6 +238,11 @@ class RenderManager(QMainWindow):
         self.queue_thread = None
         self.scan_thread = None
         self._shutting_down = False
+        self._last_push_id = ""
+        self._push_seen_mtime = 0.0
+        self._push_import_busy = False
+        self._push_watch = None
+        self._push_debounce = None
         self._scan_queue = []
         self._scan_added = 0
         self._jobs_total = 0
@@ -239,6 +265,7 @@ class RenderManager(QMainWindow):
         self._update_aep_remove_btn()
         self._update_queue_remove_btn()
         self._apply_language()
+        self._init_push_from_ae()
 
     def _queue_rendering(self):
         return bool(self.queue_thread and self.queue_thread.isRunning())
@@ -267,8 +294,12 @@ class RenderManager(QMainWindow):
             has_selection and not scanning
         )
         self.scan_all_btn.setEnabled(has_projects and not scanning)
+        self.import_from_ae_btn.setEnabled(not scanning)
         apply_zone2_buttons(
-            self.remove_aep_btn, self.scan_selected_btn, self.scan_all_btn
+            self.remove_aep_btn,
+            self.scan_selected_btn,
+            self.scan_all_btn,
+            self.import_from_ae_btn,
         )
 
     def tr(self, key):
@@ -403,11 +434,13 @@ class RenderManager(QMainWindow):
         self.scan_selected_btn = QPushButton()
         self.scan_selected_btn.setEnabled(False)
         self.scan_all_btn = QPushButton()
+        self.import_from_ae_btn = QPushButton()
         self.add_full_queue_btn = QPushButton()
         row2.addWidget(self.add_aep_btn)
         row2.addWidget(self.remove_aep_btn)
         row2.addWidget(self.scan_selected_btn)
         row2.addWidget(self.scan_all_btn)
+        row2.addWidget(self.import_from_ae_btn)
         row2.addWidget(self.add_full_queue_btn)
         row2.addStretch()
         z2l.addLayout(row2)
@@ -421,6 +454,9 @@ class RenderManager(QMainWindow):
         self.remove_aep_btn.clicked.connect(self._remove_aep)
         self.scan_selected_btn.clicked.connect(self._scan_selected_aep)
         self.scan_all_btn.clicked.connect(self._scan_all_aeps)
+        self.import_from_ae_btn.clicked.connect(
+            lambda: self._import_push_from_ae(manual=True)
+        )
         self.add_full_queue_btn.clicked.connect(self._add_full_queue_row)
 
         z2_host = QWidget()
@@ -548,7 +584,10 @@ class RenderManager(QMainWindow):
         style_log_panel(self.log_output)
         apply_action_buttons(self.start_btn, self.stop_btn, self.remove_queue_btn)
         apply_zone2_buttons(
-            self.remove_aep_btn, self.scan_selected_btn, self.scan_all_btn
+            self.remove_aep_btn,
+            self.scan_selected_btn,
+            self.scan_all_btn,
+            self.import_from_ae_btn,
         )
         self._apply_header_logo(find_bundled_file("logo_met2.png"))
         self.aep_list.setAlternatingRowColors(True)
@@ -570,6 +609,8 @@ class RenderManager(QMainWindow):
         self.remove_aep_btn.setText(t["remove_aep"])
         self.scan_selected_btn.setText(t["scan_selected"])
         self.scan_all_btn.setText(t["scan_all"])
+        self.import_from_ae_btn.setText(t["import_from_ae"])
+        self.import_from_ae_btn.setToolTip(t["import_from_ae_tip"])
         self.add_full_queue_btn.setText(t["add_full_queue"])
         self.start_btn.setText(t["start"])
         self.stop_btn.setText(t["stop"])
@@ -912,6 +953,98 @@ class RenderManager(QMainWindow):
         if self._append_full_queue_row(aep):
             self.log(f"Queued full project: {os.path.basename(aep)}")
 
+    def _init_push_from_ae(self):
+        try:
+            write_manager_exe_path()
+            deploy_push_scripts(log_callback=self.log)
+        except Exception as exc:
+            self.log(f"Push script deploy warning: {exc}")
+        self._push_debounce = QTimer(self)
+        self._push_debounce.setSingleShot(True)
+        self._push_debounce.setInterval(500)
+        self._push_debounce.timeout.connect(
+            lambda: self._import_push_from_ae(manual=False)
+        )
+        self._push_watch = QFileSystemWatcher(self)
+        self._push_watch.directoryChanged.connect(self._on_push_handoff_changed)
+        work = scan_work_dir()
+        if os.path.isdir(work):
+            self._push_watch.addPath(work)
+        QTimer.singleShot(800, lambda: self._import_push_from_ae(manual=False))
+
+    def _on_push_handoff_changed(self, _path):
+        """React once per new scan_push.json; never add/remove watch paths here."""
+        marker = scan_push_marker_path()
+        if not os.path.isfile(marker):
+            return
+        try:
+            mtime = os.path.getmtime(marker)
+        except OSError:
+            return
+        if mtime == self._push_seen_mtime:
+            return
+        self._push_seen_mtime = mtime
+        if self._push_debounce:
+            self._push_debounce.start()
+
+    def _import_scan_items(self, aep_path, items):
+        added = 0
+        skipped = 0
+        for item in items or []:
+            if not item.get("queueable", True):
+                continue
+            if self._append_scan_item_row(aep_path, item):
+                added += 1
+            else:
+                skipped += 1
+        if added:
+            self.save_state()
+        if added and self._queue_rendering():
+            self.refresh_queue_snapshot(hot_append=True)
+        return added, skipped
+
+    def _import_push_from_ae(self, manual=False):
+        if self._shutting_down or self._push_import_busy:
+            return
+        marker_path = scan_push_marker_path()
+        if not os.path.isfile(marker_path):
+            if manual:
+                self.log(self.tr("import_from_ae_none"))
+            return
+        push_id = push_marker_id(read_push_marker())
+        if not manual and push_id and push_id == self._last_push_id:
+            return
+        self._push_import_busy = True
+        try:
+            data = read_push_result()
+            if not data or not data.get("items"):
+                if manual:
+                    self.log(self.tr("import_from_ae_none"))
+                return
+            aep_path = data.get("project") or ""
+            if aep_path:
+                self._add_aep_paths([aep_path])
+            added, skipped = self._import_scan_items(aep_path, data.get("items", []))
+            if added or skipped:
+                if push_id:
+                    self._last_push_id = push_id
+                dup = (
+                    self.tr("import_from_ae_dup").format(d=skipped) if skipped else ""
+                )
+                self.log(
+                    self.tr("import_from_ae_log").format(
+                        n=added, aep=os.path.basename(aep_path) or aep_path
+                    )
+                    + dup
+                )
+                clear_push_marker()
+                self._push_seen_mtime = 0.0
+                self.save_state()
+            elif manual:
+                self.log(self.tr("import_from_ae_none"))
+        finally:
+            self._push_import_busy = False
+
     def _scan_selected_aep(self):
         selected = self.aep_list.selectedItems()
         if not selected:
@@ -950,12 +1083,7 @@ class RenderManager(QMainWindow):
         self.scan_thread.start()
 
     def _on_scan_finished(self, aep_path, data):
-        added = 0
-        for item in data.get("items", []):
-            if not item.get("queueable", True):
-                continue
-            if self._append_scan_item_row(aep_path, item):
-                added += 1
+        added, _skipped = self._import_scan_items(aep_path, data.get("items", []))
         self._scan_added += added
         self.log(
             f"Scan OK: {os.path.basename(aep_path)} — "
@@ -1369,6 +1497,7 @@ class RenderManager(QMainWindow):
             data["max_parallel"] = self.max_parallel_spin.value()
             data["sleep_on_queue_finish"] = self.sleep_on_finish_chk.isChecked()
             data["language"] = self.current_language
+            data["last_push_id"] = self._last_push_id
             data["aep_files"] = [self.aep_list.item(i).text() for i in range(self.aep_list.count())]
             data["queue"] = [self._queue_row_to_entry(r) for r in range(self.queue_table.rowCount())]
             data.setdefault("ui", {})
@@ -1393,6 +1522,7 @@ class RenderManager(QMainWindow):
         except (json.JSONDecodeError, OSError):
             return
         self.current_language = data.get("language", "en")
+        self._last_push_id = str(data.get("last_push_id", "") or "")
         aerender = data.get("aerender_path", "")
         afterfx = data.get("afterfx_path", "")
         if aerender:
@@ -1821,20 +1951,7 @@ class RenderManager(QMainWindow):
                 was_stopped, summaries, sleep_on, log_callback=self.log
             )
             if should_sleep:
-                t = TRANSLATIONS[self.current_language]
-                if (
-                    QMessageBox.question(
-                        self,
-                        t["confirm_sleep_title"],
-                        t["confirm_sleep"],
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No,
-                    )
-                    == QMessageBox.Yes
-                ):
-                    run_system_sleep(log_callback=self.log)
-                else:
-                    self.log("System sleep cancelled.")
+                run_system_sleep(log_callback=self.log)
         except Exception as exc:
             self.log(f"Queue finished handler error: {exc}")
         finally:
@@ -1897,6 +2014,8 @@ class RenderManager(QMainWindow):
 
     def closeEvent(self, event):
         self._progress_timer.stop()
+        if self._push_debounce is not None:
+            self._push_debounce.stop()
         self._shutting_down = True
         try:
             self._stop_background_threads()

@@ -66,6 +66,18 @@ def scan_args_path():
     return os.path.join(scan_work_dir(), "scan_args.json")
 
 
+def scan_result_path():
+    return os.path.join(scan_work_dir(), "scan_result.json")
+
+
+def scan_push_marker_path():
+    return os.path.join(scan_work_dir(), "scan_push.json")
+
+
+def manager_exe_path_file():
+    return os.path.join(scan_work_dir(), "manager_exe_path.txt")
+
+
 def logs_dir():
     path = os.path.join(app_dir(), "logs")
     os.makedirs(path, exist_ok=True)
