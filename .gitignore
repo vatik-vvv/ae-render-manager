@@ -20,6 +20,9 @@ build/
 dist/
 release/
 AERenderManager-*-win64.zip
+AERenderManager-*-win64-setup.exe
+AERenderManager-*-win64-setup.zip
+release/_setup_staging/
 
 # IDE / editor
 .idea/

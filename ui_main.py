@@ -120,7 +120,6 @@ TRANSLATIONS = {
         "check_env": "Check aerender",
         "telegram": "Telegram…",
         "language": "RU",
-        "zone2": "2 - Projects (.aep)",
         "add_aep": "Add AEP",
         "remove_aep": "Remove",
         "scan_selected": "Scan selected → queue",
@@ -136,7 +135,31 @@ TRANSLATIONS = {
         ),
         "import_from_ae_dup": " ({d} duplicate RQ item(s) skipped)",
         "add_full_queue": "Add full project queue",
-        "zone5": "3 - Render queue",
+        "zone2_push_help_html": (
+            "<p><b style='color:#7ec8e8'>Push from After Effects</b> "
+            "<span style='color:#a0a8b0'>(no scan, uses your open AE session)</span></p>"
+            "<ol style='margin-top:6px;margin-bottom:4px;padding-left:20px'>"
+            "<li>Add comps to <b>Window → Render Queue</b>, set outputs, <b>save the .aep</b>.</li>"
+            "<li>In AE open <b>Window → AE Render Manager</b> "
+            "(installed when you start this app once).</li>"
+            "<li>Click <b>Send to AE Render Manager</b> — the app opens or comes to front "
+            "and adds rows to the render queue below.</li>"
+            "</ol>"
+            "<p style='color:#c5e1a5;margin-top:8px'><b>First time:</b> run this app once so the AE panel "
+            "and scripts deploy to LocalAppData.</p>"
+            "<p style='color:#a0a8b0;margin-top:6px'>Auto-launch needs AE "
+            "<b>Edit → Preferences → Scripting → Allow Scripts to Write Files and Access Network</b>. "
+            "Or use <b>Import from AE</b> after sending.</p>"
+        ),
+        "zone2": (
+            "2 - Projects (.aep) — Scan an AEP, or push from open AE "
+            "(Window → AE Render Manager)"
+        ),
+        "zone5": (
+            "3 - Render queue — «Use queue» keeps skip/proxy/output from the .aep "
+            "(recommended with Skip). Parallel runs separate aerender jobs. "
+            "Right-click rows to move up/down."
+        ),
         "max_parallel": "Parallel:",
         "start": "Start render",
         "stop": "Stop",
@@ -146,12 +169,24 @@ TRANSLATIONS = {
             "RS preset", "Output", "Status", "Send2Bot",
             "Start", "End", "Render time",
         ],
-        "queue_hint": (
-            "Scan an AEP, or push from open AE (Window → AE Render Manager). "
-            "RS preset «Use queue» keeps skip/proxy/output from the .aep (recommended with Skip). "
-            "Parallel runs separate aerender jobs (different comps/AEPs). "
-            "Right-click queue rows to move up/down."
-        ),
+        "queue_header_tips": [
+            "Include this row when starting the render queue.",
+            "After Effects project (.aep) path.",
+            "Render queue item number in the AE project.",
+            "Composition to render.",
+            "First frame to render (inclusive).",
+            "Last frame to render (inclusive).",
+            "Number of frames in the range (read-only).",
+            "Skip frames whose output files already exist on disk.",
+            "Render using proxy footage when enabled in AE.",
+            "Render settings preset. «Use queue» keeps RS/OM from the AE render queue.",
+            "Output file or image sequence path.",
+            "Job status and render progress.",
+            "Send preview images to Telegram at frame milestones.",
+            "Time when this job started rendering.",
+            "Time when this job finished.",
+            "Elapsed render time for this job.",
+        ],
         "confirm_stop": "Stop all active renders?",
         "duplicate": "Project already in queue.",
         "duplicate_rq": "Render queue item already in table.",
@@ -168,6 +203,27 @@ TRANSLATIONS = {
         "move_queue_log": "Moved {n} queue row(s).",
         "sleep_on_finish": "Sleep entire PC when queue finishes",
         "clear_log": "Clear log",
+        "tg_dialog_title": "Telegram notifications",
+        "tg_bot_token": "Bot token:",
+        "tg_chat_id": "Chat ID:",
+        "tg_image_preview_max_side": "Image preview max side:",
+        "tg_test": "Test",
+        "tg_instructions_html": (
+            "<p><b style='color:#7ec8e8'>1. Create a bot</b></p>"
+            "<ol style='margin-top:4px;margin-bottom:8px;padding-left:22px'>"
+            "<li>Open Telegram and message <b>@BotFather</b>.</li>"
+            "<li>Send <code>/newbot</code>, choose a display name and username (must end with <code>bot</code>).</li>"
+            "<li>Copy the <b>HTTP API token</b> BotFather replies with — paste it below.</li>"
+            "</ol>"
+            "<p><b style='color:#7ec8e8'>2. Get your chat ID</b></p>"
+            "<ol style='margin-top:4px;margin-bottom:4px;padding-left:22px'>"
+            "<li>Open your new bot in Telegram and tap <b>Start</b> (so it can message you).</li>"
+            "<li>Message <b>@GetId</b> and tap <b>Start</b> — copy the numeric <b>Chat ID</b> it replies with.</li>"
+            "<li>Paste that ID below (personal chats use your user ID; group IDs are usually negative).</li>"
+            "</ol>"
+            "<p style='color:#a0a8b0;margin-top:8px'>Group: add <b>@GetId</b> to the group — it posts the group chat ID. "
+            "Alternative: <code>getUpdates</code> in the browser after messaging your bot.</p>"
+        ),
     },
     "ru": {
         "title": "Менеджер рендера After Effects",
@@ -177,7 +233,6 @@ TRANSLATIONS = {
         "check_env": "Проверить aerender",
         "telegram": "Telegram…",
         "language": "EN",
-        "zone2": "2 - Проекты (.aep)",
         "add_aep": "Добавить AEP",
         "remove_aep": "Удалить",
         "scan_selected": "Скан выбранного → очередь",
@@ -193,7 +248,31 @@ TRANSLATIONS = {
         ),
         "import_from_ae_dup": " ({d} дубликат(ов) RQ пропущено)",
         "add_full_queue": "Вся очередь проекта",
-        "zone5": "3 - Очередь рендера",
+        "zone2_push_help_html": (
+            "<p><b style='color:#7ec8e8'>Push из After Effects</b> "
+            "<span style='color:#a0a8b0'>(без скана, из открытой сессии AE)</span></p>"
+            "<ol style='margin-top:6px;margin-bottom:4px;padding-left:20px'>"
+            "<li>Добавьте comps в <b>Window → Render Queue</b>, задайте output, <b>сохраните .aep</b>.</li>"
+            "<li>В AE откройте <b>Window → AE Render Manager</b> "
+            "(устанавливается при первом запуске этого приложения).</li>"
+            "<li>Нажмите <b>Send to AE Render Manager</b> — приложение откроется или выйдет на передний план "
+            "и добавит строки в очередь рендера ниже.</li>"
+            "</ol>"
+            "<p style='color:#c5e1a5;margin-top:8px'><b>Первый раз:</b> запустите это приложение один раз — "
+            "панель и скрипты попадут в LocalAppData.</p>"
+            "<p style='color:#a0a8b0;margin-top:6px'>Автозапуск требует в AE "
+            "<b>Edit → Preferences → Scripting → Allow Scripts to Write Files and Access Network</b>. "
+            "Или нажмите <b>Импорт из AE</b> после отправки.</p>"
+        ),
+        "zone2": (
+            "2 - Проекты (.aep) — Скан AEP или push из открытого AE "
+            "(Window → AE Render Manager)"
+        ),
+        "zone5": (
+            "3 - Очередь рендера — «Use queue» сохраняет skip/proxy/output из .aep "
+            "(рекомендуется с Skip). Parallel — отдельные aerender. "
+            "ПКМ по строке — выше/ниже."
+        ),
         "max_parallel": "Параллельно:",
         "start": "Старт",
         "stop": "Стоп",
@@ -203,12 +282,24 @@ TRANSLATIONS = {
             "RS", "Output", "Статус", "Send2Bot",
             "Начало", "Конец", "Время рендера",
         ],
-        "queue_hint": (
-            "Скан AEP или push из открытого AE (Window → AE Render Manager). "
-            "«Use queue» сохраняет skip/proxy/output из .aep (рекомендуется с Skip). "
-            "Parallel — отдельные aerender для разных comps/AEP. "
-            "ПКМ по строке — выше/ниже."
-        ),
+        "queue_header_tips": [
+            "Включить строку при запуске очереди рендера.",
+            "Путь к проекту After Effects (.aep).",
+            "Номер пункта в Render Queue проекта AE.",
+            "Композиция для рендера.",
+            "Первый кадр (включительно).",
+            "Последний кадр (включительно).",
+            "Число кадров в диапазоне (только чтение).",
+            "Пропускать кадры, если файлы уже есть на диске.",
+            "Рендер с proxy-футажом, если включено в AE.",
+            "Пресет RS. «Use queue» — настройки из Render Queue AE.",
+            "Путь к выходному файлу или последовательности.",
+            "Статус задачи и прогресс рендера.",
+            "Отправлять превью в Telegram на ключевых кадрах.",
+            "Время начала рендера этой задачи.",
+            "Время окончания рендера.",
+            "Длительность рендера задачи.",
+        ],
         "confirm_stop": "Остановить все активные рендеры?",
         "duplicate": "Проект уже в очереди.",
         "duplicate_rq": "Пункт Render Queue уже в таблице.",
@@ -225,6 +316,27 @@ TRANSLATIONS = {
         "move_queue_log": "Перемещено строк: {n}.",
         "sleep_on_finish": "Усыпить весь ПК после очереди",
         "clear_log": "Очистить лог",
+        "tg_dialog_title": "Уведомления Telegram",
+        "tg_bot_token": "Токен бота:",
+        "tg_chat_id": "Chat ID:",
+        "tg_image_preview_max_side": "Макс. сторона превью изображения:",
+        "tg_test": "Тест",
+        "tg_instructions_html": (
+            "<p><b style='color:#7ec8e8'>1. Создать бота</b></p>"
+            "<ol style='margin-top:4px;margin-bottom:8px;padding-left:22px'>"
+            "<li>Откройте Telegram и напишите <b>@BotFather</b>.</li>"
+            "<li>Отправьте <code>/newbot</code>, задайте имя и username (должен оканчиваться на <code>bot</code>).</li>"
+            "<li>Скопируйте <b>HTTP API token</b> из ответа BotFather — вставьте ниже.</li>"
+            "</ol>"
+            "<p><b style='color:#7ec8e8'>2. Узнать chat ID</b></p>"
+            "<ol style='margin-top:4px;margin-bottom:4px;padding-left:22px'>"
+            "<li>Откройте своего бота в Telegram и нажмите <b>Start</b> (чтобы он мог писать вам).</li>"
+            "<li>Напишите <b>@GetId</b> и нажмите <b>Start</b> — скопируйте числовой <b>Chat ID</b> из ответа.</li>"
+            "<li>Вставьте ID ниже (личный чат = ваш user ID; для групп ID обычно отрицательный).</li>"
+            "</ol>"
+            "<p style='color:#a0a8b0;margin-top:8px'>Группа: добавьте <b>@GetId</b> в группу — бот покажет group chat ID. "
+            "Альтернатива: <code>getUpdates</code> в браузере после сообщения вашему боту.</p>"
+        ),
     },
 }
 
@@ -444,12 +556,33 @@ class RenderManager(QMainWindow):
         row2.addWidget(self.add_full_queue_btn)
         row2.addStretch()
         z2l.addLayout(row2)
+        self._z2_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._z2_splitter.setChildrenCollapsible(False)
         self.aep_list = AepDropList(on_aep_paths=self._add_aep_paths)
+        self.aep_list.setMinimumWidth(200)
         self.aep_list.itemSelectionChanged.connect(self._update_aep_remove_btn)
-        z2l.addWidget(self.aep_list)
-        self.queue_hint_label = QLabel()
-        self.queue_hint_label.setWordWrap(True)
-        z2l.addWidget(self.queue_hint_label)
+        self.zone2_push_help_label = QLabel()
+        self.zone2_push_help_label.setObjectName("zone2PushHelp")
+        self.zone2_push_help_label.setWordWrap(True)
+        self.zone2_push_help_label.setTextFormat(Qt.RichText)
+        self.zone2_push_help_label.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
+        self.zone2_push_help_label.setMinimumWidth(220)
+        self.zone2_push_help_label.setStyleSheet(
+            "QLabel#zone2PushHelp {"
+            "  color: #c8d0d8;"
+            "  padding: 8px 10px;"
+            "  background-color: #2a2e32;"
+            "  border: 1px solid #4a5560;"
+            "  border-radius: 6px;"
+            "}"
+        )
+        self._z2_splitter.addWidget(self.aep_list)
+        self._z2_splitter.addWidget(self.zone2_push_help_label)
+        self._z2_splitter.setStretchFactor(0, 3)
+        self._z2_splitter.setStretchFactor(1, 2)
+        z2l.addWidget(self._z2_splitter, 1)
         self.add_aep_btn.clicked.connect(self._add_aep_files)
         self.remove_aep_btn.clicked.connect(self._remove_aep)
         self.scan_selected_btn.clicked.connect(self._scan_selected_aep)
@@ -578,7 +711,6 @@ class RenderManager(QMainWindow):
         self._splitter_content.splitterMoved.connect(self._on_splitter_moved)
         self._splitter_queue_log.splitterMoved.connect(self._on_splitter_moved)
 
-        style_muted_label(self.queue_hint_label)
         style_muted_label(self.render_progress_label)
         self.render_progress_label.setStyleSheet("color: #00BFFF; font-size: 12px;")
         style_log_panel(self.log_output)
@@ -591,14 +723,24 @@ class RenderManager(QMainWindow):
         )
         self._apply_header_logo(find_bundled_file("logo_met2.png"))
         self.aep_list.setAlternatingRowColors(True)
+        QTimer.singleShot(0, self._balance_zone2_splitter)
         self._update_global_progress(0, 0, -1, "")
+
+    def _balance_zone2_splitter(self):
+        if not getattr(self, "_z2_splitter", None):
+            return
+        total = max(self._z2_splitter.width(), 400)
+        list_w = int(total * 0.55)
+        self._z2_splitter.setSizes([list_w, total - list_w])
 
     def _apply_language(self):
         t = TRANSLATIONS[self.current_language]
         self.setWindowTitle(t["title"])
         self.zone1_box.setTitle(t["zone1"])
         self.zone2_box.setTitle(t["zone2"])
+        self.zone2_box.setToolTip(t["zone2"])
         self.zone5_box.setTitle(t["zone5"])
+        self.zone5_box.setToolTip(t["zone5"])
         self.parallel_label.setText(t["max_parallel"])
         self.browse_ae_btn.setText(t["browse_ae"])
         self.save_btn.setText(t["save_settings"])
@@ -612,13 +754,22 @@ class RenderManager(QMainWindow):
         self.import_from_ae_btn.setText(t["import_from_ae"])
         self.import_from_ae_btn.setToolTip(t["import_from_ae_tip"])
         self.add_full_queue_btn.setText(t["add_full_queue"])
+        self.zone2_push_help_label.setText(t["zone2_push_help_html"])
         self.start_btn.setText(t["start"])
         self.stop_btn.setText(t["stop"])
         self.remove_queue_btn.setText(t["remove_queue"])
         self.clear_log_btn.setText(t["clear_log"])
         self.sleep_on_finish_chk.setText(t["sleep_on_finish"])
-        self.queue_hint_label.setText(t["queue_hint"])
         self.queue_table.setHorizontalHeaderLabels(t["queue_headers"])
+        tips = t.get("queue_header_tips", [])
+        for col, tip in enumerate(tips):
+            if col >= QUEUE_COL_COUNT:
+                break
+            header_item = self.queue_table.horizontalHeaderItem(col)
+            if header_item is None:
+                header_item = QTableWidgetItem(t["queue_headers"][col])
+                self.queue_table.setHorizontalHeaderItem(col, header_item)
+            header_item.setToolTip(tip)
 
     def _switch_language(self):
         self.current_language = "ru" if self.current_language == "en" else "en"
@@ -718,9 +869,35 @@ class RenderManager(QMainWindow):
             self.log(f"aerender check failed: {e}")
 
     def _open_telegram_dialog(self):
+        t = TRANSLATIONS[self.current_language]
         dlg = QDialog(self)
-        dlg.setWindowTitle("Telegram")
-        form = QFormLayout(dlg)
+        dlg.setWindowTitle(t["tg_dialog_title"])
+        dlg.setMinimumSize(520, 480)
+        dlg.resize(540, 500)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+
+        help_label = QLabel()
+        help_label.setObjectName("tgHelpLabel")
+        help_label.setWordWrap(True)
+        help_label.setTextFormat(Qt.RichText)
+        help_label.setOpenExternalLinks(True)
+        help_label.setText(t["tg_instructions_html"])
+        help_label.setStyleSheet(
+            "QLabel#tgHelpLabel {"
+            "  color: #c8d0d8;"
+            "  padding: 10px 12px;"
+            "  background-color: #2a2e32;"
+            "  border: 1px solid #4a5560;"
+            "  border-radius: 6px;"
+            "  line-height: 1.35;"
+            "}"
+        )
+        layout.addWidget(help_label)
+
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(0, 0, 0, 0)
         token_edit = QLineEdit()
         chat_edit = QLineEdit()
         preview_spin = QSpinBox()
@@ -736,13 +913,15 @@ class RenderManager(QMainWindow):
                 preview_spin.setValue(int(tg.get("preview_max_side", 2000)))
             except (json.JSONDecodeError, ValueError, OSError):
                 pass
-        form.addRow("Bot token:", token_edit)
-        form.addRow("Chat ID:", chat_edit)
-        form.addRow("Preview max side:", preview_spin)
+        form.addRow(t["tg_bot_token"], token_edit)
+        form.addRow(t["tg_chat_id"], chat_edit)
+        form.addRow(t["tg_image_preview_max_side"], preview_spin)
+        layout.addWidget(form_host)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        test_btn = QPushButton("Test")
+        test_btn = QPushButton(t["tg_test"])
         buttons.addButton(test_btn, QDialogButtonBox.ActionRole)
-        form.addRow(buttons)
+        layout.addWidget(buttons)
 
         def save_tg():
             data = {}

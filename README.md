@@ -48,18 +48,30 @@ Run the manager at least once so it registers its exe path for auto-launch. In A
 1. Review the render queue table (RS **Use queue** is recommended).
 2. **Start render** — each row runs `aerender` with the scanned output path and frame range.
 
-## Build executable
+## Build & release
+
+```powershell
+pip install pyinstaller
+.\build_release.ps1
+```
+
+This builds `dist\AERenderManager.exe`, a portable ZIP, and (if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed) `release\AERenderManager-1.1.1-win64-setup.exe`.
+
+Upload to GitHub:
+
+```powershell
+$env:GITHUB_TOKEN = "…"
+python publish_release.py
+```
+
+Manual dev run:
 
 ```powershell
 python build_icon.py
-pip install pyinstaller
 pyinstaller main.spec
 Copy-Item config.example.json dist\config.json
+python main.py
 ```
-
-`build_icon.py` builds `AERM_icon.ico` with 16–256 px layers for sharp Explorer icons (including extra-large view). PyInstaller regenerates the ICO from `AERM_icon.png` when the PNG is newer.
-
-Output: `dist\AERenderManager.exe` (dark-themed GUI, no console). Place `config.json` next to the exe.
 
 ## Project layout
 
@@ -76,6 +88,8 @@ Output: `dist\AERenderManager.exe` (dark-themed GUI, no console). Place `config.
 | `ae_paths.py` | AE install detection |
 | `telegram_notifier.py` | Telegram Bot API |
 | `app_paths.py` | Dev vs frozen exe paths |
+| `installer/AERenderManager.iss` | Windows installer (Inno Setup) |
+| `publish_release.py` | ZIP + installer + GitHub release upload |
 
 ## Parallel renders
 

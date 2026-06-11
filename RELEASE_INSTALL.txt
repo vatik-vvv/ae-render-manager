@@ -1,11 +1,28 @@
-After Effects Render Manager — Windows install (no compile needed)
+After Effects Render Manager — Windows
 
-1. Unzip this folder anywhere (e.g. Desktop\AERenderManager).
-2. Copy config.example.json to config.json (same folder as AERenderManager.exe).
-3. Edit config.json: set aerender_path to your After Effects aerender.exe.
-4. Optional: Telegram bot_token and chat_id for notifications.
-5. Run AERenderManager.exe.
+INSTALL (recommended)
+  Run AERenderManager-1.1.1-win64-setup.exe
+  Shortcuts are created; config.example.json is copied to config.json on first install.
 
-In After Effects: add comps to Render Queue, save the .aep, then use the manager to scan and render.
+PORTABLE
+  Unzip AERenderManager-1.1.1-win64.zip anywhere.
+  Copy config.example.json to config.json in the same folder as AERenderManager.exe.
 
-Source & updates: https://github.com/vatik-vvv/ae-render-manager
+SETUP
+  1. Edit config.json: set aerender_path to your After Effects aerender.exe.
+  2. Optional: Telegram bot_token and chat_id (see Telegram… in the app).
+  3. Run AERenderManager.exe.
+
+PUSH FROM AFTER EFFECTS (fast)
+  1. In AE: Render Queue → save the .aep.
+  2. Window → AE Render Manager → Send to AE Render Manager.
+  3. The manager imports rows automatically.
+
+  First run of the manager deploys the AE panel/scripts.
+  Auto-launch needs: Edit → Preferences → Scripting →
+  Allow Scripts to Write Files and Access Network.
+
+SCAN (alternative)
+  Add .aep files in zone 2 → Scan selected / Scan all.
+
+Source: https://github.com/vatik-vvv/ae-render-manager
